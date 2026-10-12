@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 
-from . import aisa
+from . import aisa, llm
 
 CHUNK = 25
 SYSTEM = (
@@ -51,13 +51,15 @@ def score(rows: list[dict], model: str) -> dict:
     """Sets r["named"] on each row the model scored. Returns {"judged": n} or {"error": ...}."""
     if not model:
         return {"judged": 0, "skipped": True}
+    if not llm.available():
+        return {"judged": 0, "skipped": True}
     judged = 0
     for start in range(0, len(rows), CHUNK):
         chunk = rows[start:start + CHUNK]
         user = json.dumps([{"i": i, "term": r["term"], "examples": [e[:160] for e in r.get("examples", [])[:3]]}
                            for i, r in enumerate(chunk)], ensure_ascii=False)
         try:
-            scores = parse(aisa.chat(model, SYSTEM, user), len(chunk))
+            scores = parse(llm.chat(model, SYSTEM, user), len(chunk))
         except aisa.AisaError as exc:
             return {"judged": judged, "error": str(exc)[:160]}
         for i, s in scores.items():

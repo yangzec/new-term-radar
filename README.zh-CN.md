@@ -163,6 +163,29 @@ python scripts/gsc_auth.py gsc_client.json   # 打开一次浏览器授权，写
 
 `--mail` 通过 [Resend](https://resend.com) 发送报告。设置 `RESEND_API_KEY`、`EMAIL_FROM`（你在 Resend 验证过的域名下的地址）和 `RADAR_EMAIL_TO`（多个用逗号分隔）。要 HTML 版需要 `pip install markdown`。
 
+## 不用 AIsa 也能跑：xAI、pytrends 和数据收件箱
+
+原来要走 AIsa 的每一步，现在都有别的来源，在 `config.json` 里选：
+
+```json
+"llm":    {"provider": "auto", "model": "grok-4-1-fast-non-reasoning"},
+"trends": {"provider": "auto", "delay": 8, "retries": 3, "backoff": 60},
+"inbox":  {"dir": ""}
+```
+
+- **模型**（`radar/llm.py`）：`provider` 可选 `xai`、`aisa`、`auto`（设了 `XAI_API_KEY` 就用 xai，否则 aisa）。用 xai 时，名字判断、关键词提议、筛选都用 `llm.model`，走 `https://api.x.ai/v1`；改 `llm.base_url` 和 `llm.key_env` 可接任何兼容 OpenAI 的服务。没有 key：跳过判断和提议，报告照出，只是不排序。
+- **Google Trends**（`radar/trends.py`）：`provider` 可选 `aisa`、`pytrends`、`auto`（有 `AISA_API_KEY` 用 aisa，否则 pytrends）。pytrends（`pip install pytrends`）免费但非官方：每次查询间隔 `delay` 秒，失败重试 `retries` 次、每次等 `backoff`×n 秒，按天缓存在 `state/trends_cache/`；重试后仍 429，当天剩下的查询放弃并写进报告。云服务器上 Google 经常查一两次就 429，家用网络能撑久一些。
+- **新站信号**只能用 AIsa（DataForSEO whois overview），没有 key 就跳过。
+- **收件箱**（`radar/inbox.py`）：别的 agent 或你自己，可以把当天数据放进 `state/inbox/YYYY-MM-DD/`（或 `inbox.dir/YYYY-MM-DD/`）。优先用收件箱；缺的部分有 AIsa key 就走 AIsa，否则跳过。每次 `daily` 会在同目录写 `requests.json`，列出没拿到数据的账号、名字和短语。
+
+| 文件 | 格式 | 用在 |
+|---|---|---|
+| `x_posts.json` | `{"users": {"<账号>": <X API v2 用户推文响应>}, "search": {"<名字>": <X API v2 搜索响应>}}`，每个响应 `{"data": [{"id", "text", "created_at", "author_id", "public_metrics": {"like_count"}}], "includes": {"users": [{"id", "username"}]}}` | ① X（users）、关键词表证据（search） |
+| `volumes.json` | Google Ads 关键词规划师历史数据：`{"metrics": [{"keyword", "avgMonthlySearches", "monthlySearchVolumes": [{"year", "month": "AUGUST", "monthlySearches"}]}]}` | 关键词表搜索量 |
+| `related.json` | `{"<名字>": {"rising": ["..."], "top": ["..."]}}`（Trends 相关查询、Google 联想、关键词规划师 ideas 都行） | 关键词表相关查询 |
+
+`requests.json` 形如 `{"x_users": [...], "x_search": [...], "volumes": [...], "related": [...]}`。`volumes` 里的短语要等模型提议后才知道，所以留给下一次运行补。
+
 ## 在 GitHub Actions 上跑
 
 `.github/workflows/radar.yml` 每 8 小时跑一次 `sources`、每天跑一次 `daily`，状态存在 Actions 缓存里，报告写到每次运行的摘要页。默认关闭，需要你主动开启：

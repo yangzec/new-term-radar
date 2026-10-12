@@ -49,7 +49,7 @@ import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import UA, aisa, goanyapi, review, snap
+from . import UA, aisa, goanyapi, inbox, llm, review, snap, trends
 
 POSTS_KEPT = 12
 POST_CHARS = 400
@@ -110,15 +110,25 @@ def _readme(repo: str) -> str:
         return ""
 
 
-def evidence(names: list[str], repos: dict[str, str], today: date) -> tuple[dict[str, dict], int]:
-    """{name: {"posts": [...], "readme": str}} and the cost in micro-USD."""
+def evidence(names: list[str], repos: dict[str, str], today: date, supplied: dict | None = None) -> tuple[dict[str, dict], int]:
+    """{name: {"posts": [...], "readme": str}} and the cost in micro-USD. `supplied`: the
+    inbox's {name: X API v2 search response}; names not in it go to AIsa when a key is set."""
+    supplied = supplied or {}
     since = (today - timedelta(days=SEARCH_DAYS)).isoformat()
-    calls = [{"call_id": f"n{i}", "tool": SEARCH_TOOL, "arguments": {
-        "query": f'"{n}" min_faves:{MIN_FAVES} -filter:replies since:{since}', "queryType": "Top"}} for i, n in enumerate(names)]
-    data, cost = aisa.call_all(calls)
+    ask = [n for n in names if n not in supplied] if os.environ.get("AISA_API_KEY", "").strip() else []
+    calls = [{"call_id": f"n{names.index(n)}", "tool": SEARCH_TOOL, "arguments": {
+        "query": f'"{n}" min_faves:{MIN_FAVES} -filter:replies since:{since}', "queryType": "Top"}} for n in ask]
+    data, cost = aisa.call_all(calls) if calls else ({}, 0)
+    for i, n in enumerate(names):
+        if n in supplied:
+            data[f"n{i}"] = {"_inbox": sorted(inbox.tweets(supplied[n]), key=lambda p: -p["likes"])}
     out = {}
     for i, n in enumerate(names):
         d = data.get(f"n{i}") or {}
+        if "_inbox" in d:
+            posts = [{k: p[k] for k in ("text", "likes", "by", "url")} for p in d["_inbox"]][:POSTS_KEPT]
+            out[n] = {"posts": posts, "readme": _readme(repos[n]) if repos.get(n) else "", "repo": repos.get(n, "")}
+            continue
         tweets = d.get("tweets") or (d.get("data") or {}).get("tweets") or []
         posts = sorted(({"text": " ".join((t.get("text") or "").split()), "likes": int(t.get("likeCount") or 0),
                          "by": (t.get("author") or {}).get("userName") or "?", "url": t.get("url", "")} for t in tweets),
@@ -149,7 +159,10 @@ def propose(model: str, name: str, ev: dict) -> list[dict]:
         return []
     posts = "\n".join(f"- ({p['likes']} likes) @{p['by']}: {p['text'][:POST_CHARS]}" for p in ev["posts"])
     user = f"NAME: {name}\n\nPOSTS:\n{posts or '(none found)'}\n" + (f"\nREADME of {ev['repo']}:\n{ev['readme']}\n" if ev["readme"] else "")
-    return parse(aisa.chat(model, SYSTEM, user, max_tokens=900), name)
+    try:
+        return parse(llm.chat(model, SYSTEM, user, max_tokens=900), name)
+    except aisa.AisaError:
+        return []
 
 
 SCREEN = (
@@ -201,7 +214,7 @@ def screen(model: str, name: str, ev: dict, cands: list[dict]) -> list[dict]:
     user = f"NAME: {name}\n\nEVIDENCE:\n{posts or ev['readme'][:1200]}\n\nCANDIDATES:\n" + json.dumps(
         [{"i": i, "keyword": c["phrase"]} for i, c in enumerate(cands)], ensure_ascii=False)
     try:
-        answer = aisa.chat(model, SCREEN, user, max_tokens=600)
+        answer = llm.chat(model, SCREEN, user, max_tokens=600)
     except aisa.AisaError:
         return cands
     m = re.search(r"\[.*\]", answer, re.S)
@@ -235,10 +248,19 @@ def relevant(cands: list[dict]) -> list[dict]:
     return [c for c in cands if not c.get("is_name") and c.get("relevance", 1.0) >= RELEVANT_MIN]
 
 
-def volumes(phrases: list[str], location_code: int) -> tuple[dict[str, dict], int]:
-    """{phrase: {"volume", "month"}} from Google Ads, one batch call."""
-    if not phrases:
-        return {}, 0
+def volumes(phrases: list[str], location_code: int, supplied: dict | None = None) -> tuple[dict[str, dict], int]:
+    """{phrase: {"volume", "month"}} from Google Ads: the inbox's volumes.json first (already
+    parsed by inbox.volumes), the rest in one AIsa batch call when a key is set."""
+    supplied = supplied or {}
+    have = {p: supplied[p] for p in phrases if p in supplied}
+    phrases = [p for p in phrases if p not in supplied]
+    if not phrases or not os.environ.get("AISA_API_KEY", "").strip():
+        return have, 0
+    got, cost = _aisa_volumes(phrases, location_code)
+    return {**got, **have}, cost
+
+
+def _aisa_volumes(phrases: list[str], location_code: int) -> tuple[dict[str, dict], int]:
     data, cost = aisa.call([{"call_id": "vol", "tool": VOLUME_TOOL, "arguments": {"body": [{
         "keywords": phrases, "location_code": location_code, "language_code": "en"}]}}])
     out = {}
@@ -363,14 +385,15 @@ def _pairs(task: dict) -> list[tuple[date, int, int]]:
 
 def fetch_series(keywords: list[str], benchmark: str, today: date) -> tuple[dict[str, dict], int]:
     """{keyword: {"solo": [(day, value)], "pair": [(day, value, benchmark value)]}}: two Trends lookups each."""
-    window = {"date_from": (today - timedelta(days=TRENDS_DAYS)).isoformat(), "date_to": today.isoformat()}
-    calls = []
+    f, t = (today - timedelta(days=TRENDS_DAYS)).isoformat(), today.isoformat()
+    req = {}
     for i, k in enumerate(keywords):
-        calls.append({"call_id": f"s{i}", "tool": review.TOOL, "arguments": {"body": [{"keywords": [k], **window}]}})
-        calls.append({"call_id": f"p{i}", "tool": review.TOOL, "arguments": {"body": [{"keywords": [k, benchmark], **window}]}})
-    data, cost = aisa.call_all(calls)
-    task = lambda cid: ((data.get(cid) or {}).get("tasks") or [{}])[0]  # noqa: E731
-    return {k: {"solo": review._series(task(f"s{i}")), "pair": _pairs(task(f"p{i}"))} for i, k in enumerate(keywords)}, cost
+        req[f"s{i}"] = ([k], f, t)
+        req[f"p{i}"] = ([k, benchmark], f, t)
+    data, cost = trends.fetch(req)
+    solo = lambda cid: [(d, (v + [0])[0]) for d, *v in data.get(cid, [])]  # noqa: E731
+    pair = lambda cid: [(d, *(v + [0, 0])[:2]) for d, *v in data.get(cid, [])]  # noqa: E731
+    return {k: {"solo": solo(f"s{i}"), "pair": pair(f"p{i}")} for i, k in enumerate(keywords)}, cost
 
 
 def measure(rows: list[dict], series: dict[str, dict], min_daily: int, today: date) -> float | None:
@@ -397,21 +420,30 @@ def run(cfg: dict, state: Path, names: list[str], repos: dict[str, str], today: 
     todo = due(names, seen, today, c["per_day"], c["recheck_days"])
     if not todo:
         return {"names": [], "rows": [], "proposed": 0, "cost_micros": 0}
-    ev, cost = evidence(todo, repos, today)
+    box_x = inbox.load(cfg, state, "x_posts", today) or {}
+    box_rel = inbox.load(cfg, state, "related", today) or {}
+    box_vol = inbox.volumes(inbox.load(cfg, state, "volumes", today) or {})
+    ev, cost = evidence(todo, repos, today, box_x.get("search"))
+    inbox.request(cfg, state, "x_search", [n for n in todo if n not in (box_x.get("search") or {})], today)
     proposed: dict[str, dict] = {}
     asked, c0 = 0, 0
     tails: dict[str, list[str]] = {}
     cosearch: list[dict] = []
     related_errors: list[str] = []
-    use_related = bool(goanyapi.key()) and c.get("related", True)
+    use_related = (bool(goanyapi.key()) or bool(box_rel)) and c.get("related", True)
     for name in todo:
         cands = [dict(u, source="model") for u in propose(c["model"], name, ev[name])]
         if use_related:
-            try:
-                related, cost_r = goanyapi.related_queries(name, c["related_geo"])
-            except goanyapi.GoAnyError as exc:
-                related, cost_r = {}, 0
-                related_errors.append(f"{name}: {exc}")
+            related, cost_r = {}, 0
+            if name in box_rel:
+                related = {k: [" ".join(str(q).lower().split()) for q in box_rel[name].get(k) or []] for k in ("rising", "top")}
+            elif goanyapi.key():
+                try:
+                    related, cost_r = goanyapi.related_queries(name, c["related_geo"])
+                except goanyapi.GoAnyError as exc:
+                    related_errors.append(f"{name}: {exc}")
+            else:
+                inbox.request(cfg, state, "related", [name], today)
             c0 += cost_r
             tails[name], searched = split_related(name, related)
             have = {u["phrase"] for u in cands}
@@ -426,7 +458,8 @@ def run(cfg: dict, state: Path, names: list[str], repos: dict[str, str], today: 
             if u["source"] == "searched":
                 row["source"] = "searched"
     bench = c["benchmark"].lower()
-    vol, c2 = volumes(sorted(proposed), c["location_code"])
+    vol, c2 = volumes(sorted(proposed), c["location_code"], box_vol)
+    inbox.request(cfg, state, "volumes", [p for p in sorted(proposed) if p not in vol], today)
     generic = sorted((dict(r, **vol[p]) for p, r in proposed.items() if vol.get(p, {}).get("volume", 0) >= c["min_volume"]),
                      key=lambda r: -r["volume"])[:c["trends_max"]]
     rows = [{"term": n, "phrase": n, "kind": "name", "names": [], "brand": True, "evidence": "", **vol.get(n, {})} for n in todo] + generic
@@ -443,4 +476,5 @@ def run(cfg: dict, state: Path, names: list[str], repos: dict[str, str], today: 
             "bench_daily": round(daily) if daily else None, "volume_month": next((r["month"] for r in generic if r.get("month")), ""),
             "no_evidence": [n for n in todo if not ev[n]["posts"] and not ev[n]["readme"]],
             "related": use_related, "tails": {n: v for n, v in tails.items() if v}, "cosearch": cosearch,
-            "related_errors": related_errors, "cost_micros": cost + c0 + c2 + c3}
+            "related_errors": related_errors + trends.last_errors, "llm": llm.provider() if llm.available() else "",
+            "trends": trends.provider(), "cost_micros": cost + c0 + c2 + c3}

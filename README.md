@@ -186,6 +186,29 @@ python scripts/gsc_auth.py gsc_client.json   # opens a browser once, writes gsc_
 
 `--mail` sends the report through [Resend](https://resend.com). Set `RESEND_API_KEY`, `EMAIL_FROM` (an address on a domain you verified there) and `RADAR_EMAIL_TO` (comma-separated). `pip install markdown` for the HTML version.
 
+## Running without AIsa: xAI, pytrends and the inbox
+
+Every AIsa step now has another way in, chosen in `config.json`:
+
+```json
+"llm":    {"provider": "auto", "model": "grok-4-1-fast-non-reasoning"},
+"trends": {"provider": "auto", "delay": 8, "retries": 3, "backoff": 60},
+"inbox":  {"dir": ""}
+```
+
+- **Models** (`radar/llm.py`): `provider` is `xai`, `aisa` or `auto` (xai when `XAI_API_KEY` is set, else aisa). With xai every model step (name judge, keyword proposals, the screen) uses `llm.model` through `https://api.x.ai/v1`; `llm.base_url` and `llm.key_env` point it at any other OpenAI-compatible server. No key: the judge and the proposals are skipped and the report goes out unsorted.
+- **Google Trends** (`radar/trends.py`): `provider` is `aisa`, `pytrends` or `auto` (aisa when `AISA_API_KEY` is set, else pytrends). pytrends (`pip install pytrends`) is free and unofficial: lookups are spaced by `delay` seconds, retried `retries` times with `backoff`×n seconds between, cached per day in `state/trends_cache/`, and after a 429 that survives the retries the rest of the day's lookups are dropped and listed in the report. From cloud servers Google often answers 429 after the first lookup or two; from a home connection it lasts longer.
+- **New sites** need AIsa (DataForSEO whois overview); without the key the signal is skipped.
+- **Inbox** (`radar/inbox.py`): another agent, or you, can drop the day's data in `state/inbox/YYYY-MM-DD/` (or `inbox.dir/YYYY-MM-DD/`). Inbox data is used first; what is missing goes to AIsa when the key is set, else is skipped. Each `daily` run writes `requests.json` there: the accounts, names and phrases it had no data for.
+
+| File | Shape | Used by |
+|---|---|---|
+| `x_posts.json` | `{"users": {"<handle>": <X API v2 user tweets response>}, "search": {"<name>": <X API v2 search response>}}`, each response `{"data": [{"id", "text", "created_at", "author_id", "public_metrics": {"like_count"}}], "includes": {"users": [{"id", "username"}]}}` | ① X (users), keyword table evidence (search) |
+| `volumes.json` | Google Ads Keyword Planner historical metrics: `{"metrics": [{"keyword", "avgMonthlySearches", "monthlySearchVolumes": [{"year", "month": "AUGUST", "monthlySearches"}]}]}` | keyword table volumes |
+| `related.json` | `{"<name>": {"rising": ["..."], "top": ["..."]}}` (Trends related queries, Google autocomplete, Keyword Planner ideas) | keyword table related queries |
+
+`requests.json` looks like `{"x_users": [...], "x_search": [...], "volumes": [...], "related": [...]}`. Phrases for `volumes` are only known after the model has proposed them, so they can be supplied for the next run.
+
 ## Run it on GitHub Actions
 
 `.github/workflows/radar.yml` runs `sources` every 8 hours and `daily` once a day, keeps the state in the Actions cache, and writes each report to the run summary. It is off until you opt in:

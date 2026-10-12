@@ -339,7 +339,7 @@ def test_review_stores_the_verdict(cfg, tmp_path, monkeypatch):
     points = [{"date_from": (date(2026, 9, 19) + timedelta(days=i)).isoformat(), "values": [v]}
               for i, v in enumerate([0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 30, 100, 0, 0])]
     answer = {"tasks": [{"result": [{"items": [{"data": points}]}]}]}
-    monkeypatch.setattr(review.aisa, "call_all", lambda calls: ({c["call_id"]: answer for c in calls}, 1200))
+    monkeypatch.setattr(review.trends.aisa, "call_all", lambda calls: ({c["call_id"]: answer for c in calls}, 1200))
     out = review.review(cfg, conn, date(2026, 10, 10))
     assert out["checked"] == [{"term": "niko strata", "first_seen": "2026-09-25", "verdict": "hit", "lead_days": 3}]
     assert conn.execute("SELECT verdict, lead_days FROM leads").fetchone() == ("hit", 3)
@@ -514,14 +514,14 @@ def test_decisions():
 def _fake_usecase_network(monkeypatch):
     rise = _daily([1] * 85 + [9, 53, 40, 59, 100])
     flat = _daily([20] * 90)
-    monkeypatch.setattr(usecases, "evidence", lambda names, repos, today: (
+    monkeypatch.setattr(usecases, "evidence", lambda names, repos, today, *a: (
         {n: {"posts": [{"text": "check if any image is AI generated", "likes": 900, "by": "a", "url": ""}], "readme": "", "repo": ""} for n in names}, 3000))
     monkeypatch.setattr(usecases, "propose", lambda model, name, ev: [
         {"phrase": "ai image detector", "evidence": "check if any image is AI generated", "brand": False},
         {"phrase": "photoshop alternative", "evidence": "free clone", "brand": True},
         {"phrase": "nobody searches this", "evidence": "x", "brand": False}])
     monkeypatch.setattr(usecases, "screen", lambda model, name, ev, cands: cands)
-    monkeypatch.setattr(usecases, "volumes", lambda phrases, loc: (
+    monkeypatch.setattr(usecases, "volumes", lambda phrases, loc, *a: (
         {"ai image detector": {"volume": 60000, "month": "2026-08"}, "photoshop alternative": {"volume": 6000, "month": "2026-08"},
          "nobody searches this": {"volume": 0, "month": ""}}, 90000))
     monkeypatch.setattr(usecases, "fetch_series", lambda keywords, bench, today: (
@@ -559,7 +559,7 @@ def test_review_ignores_the_unsettled_days(cfg, tmp_path, monkeypatch):
     store.record(conn, [_lead("ai image detector", ["usecase"])], date(2026, 9, 28))
     points = [{"date_from": d.isoformat(), "values": [v]} for d, v in _daily([5] * 43 + [0, 100])]
     answer = {"tasks": [{"result": [{"items": [{"data": points}]}]}]}
-    monkeypatch.setattr(review.aisa, "call_all", lambda calls: ({c["call_id"]: answer for c in calls}, 1200))
+    monkeypatch.setattr(review.trends.aisa, "call_all", lambda calls: ({c["call_id"]: answer for c in calls}, 1200))
     assert review.review(cfg, conn, TODAY)["checked"][0]["verdict"] == "miss"
 
 
@@ -609,7 +609,7 @@ def test_with_a_key_related_queries_join_the_table_and_other_names_become_leads(
         {"rising": ["ai photo detector", "gpt image 2.5", "synthid detector online"], "top": []}, 6000))
     monkeypatch.setattr(usecases, "screen", lambda model, name, ev, cands: [
         dict(c, relevance=0.9, is_name=c["phrase"] == "gpt image 2.5") for c in cands])
-    monkeypatch.setattr(usecases, "volumes", lambda phrases, loc: (
+    monkeypatch.setattr(usecases, "volumes", lambda phrases, loc, *a: (
         {p: {"volume": 9000, "month": "2026-08"} for p in phrases if p != "nobody searches this"}, 90000))
     uc = usecases.run(cfg, tmp_path, ["synthid detector"], {}, TODAY)
     rows = {r["phrase"]: r for r in uc["rows"]}

@@ -10,12 +10,13 @@ hf_new   models that entered Hugging Face's trending top HF_TOP since the last r
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import UA, aisa, snap
+from . import UA, aisa, inbox, snap
 from .i18n import t
 from .terms import STOP, _drop_nested, names
 
@@ -86,10 +87,23 @@ def x_new(cfg: dict, state: Path) -> dict:
     handles = accounts(cfg)
     if not handles:
         return {"skipped": True}
+    supplied = (inbox.load(cfg, state, "x_posts") or {}).get("users") or {}
+    supplied = {k.lower().lstrip("@"): v for k, v in supplied.items()}
+    rest = [h for h in handles if h.lower() not in supplied]
+    if rest and not os.environ.get("AISA_API_KEY", "").strip():
+        inbox.request(cfg, state, "x_users", rest)
+        rest = []
+    if not supplied and not rest:
+        return {"skipped": True, "reason": "no inbox x_posts.json and no AISA_API_KEY"}
     data, cost = aisa.call_all([{"call_id": h, "tool": "get_twitter_user_last_tweets", "arguments": {"userName": h}}
-                                for h in handles])
+                                for h in rest]) if rest else ({}, 0)
     posts = []
     for h in handles:
+        if h.lower() in supplied:
+            data[h] = True
+            posts += [{"account": h, "text": p["text"], "likes": p["likes"], "url": p["url"], "created": p["created"]}
+                      for p in inbox.tweets(supplied[h.lower()])]
+            continue
         for tw in ((data.get(h) or {}).get("data") or {}).get("tweets") or []:
             posts.append({"account": h, "text": tw.get("text") or "", "likes": int(tw.get("likeCount") or 0),
                           "url": tw.get("url", ""), "created": _posted(tw)})

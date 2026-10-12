@@ -4,14 +4,14 @@
   python -m radar sources  [--config config.json] [--state state] [--out sources.md] [--mail]
 
 Signals:
-  ① x         names the accounts you follow said for the first time (AIsa)
+  ① x         names the accounts you follow said for the first time (inbox x_posts.json, else AIsa)
   ① hf        models new to Hugging Face's trending top 50
   ② breakout  one new GitHub repo taking off on its own
   ③ sitemaps  pages other sites added since the last run
   ③ newsites  domains registered in the last 90 days that already rank (weekly; AIsa)
   ④ gsc       queries your own site got impressions for, for the first time (optional)
-  ⑤ review    leads from 14 days ago checked in Google Trends; hit rate per signal (AIsa)
-  usecases    the generic terms behind today's names, sized against a benchmark keyword (AIsa)
+  ⑤ review    leads from 14 days ago checked in Google Trends; hit rate per signal (trends.provider: aisa or pytrends)
+  usecases    the generic terms behind today's names, sized against a benchmark keyword (llm: xai/aisa; trends; inbox)
 
 `sources` runs only ① (they change by the hour) and writes a report only when there is a
 name or an error. `daily` runs everything; give it `--skip x,hf` when `sources` runs
@@ -28,7 +28,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import breakout, config, gsc, new_sites, notify, report, review, sitemaps, sources, store, usecases
+from . import breakout, config, llm, trends, gsc, new_sites, notify, report, review, sitemaps, sources, store, usecases
 from .i18n import t
 
 SKIPPABLE = {"x", "hf", "breakout", "sitemaps", "newsites", "gsc", "review", "judge", "usecases"}
@@ -46,6 +46,7 @@ def run(fn, skip: bool = False) -> dict:
 
 def _finish(args, text: str, subject: str) -> None:
     if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(text)
     print(text)
     if args.mail:
@@ -91,6 +92,7 @@ def cmd_daily(args, cfg: dict, state: Path) -> int:
     summ = run(lambda: store.summary(conn))
     text = report.daily(cfg, lead, blocks, found, rev, summ, extra)
     if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).with_suffix(".json").write_text(json.dumps(
             {"leads": lead, **blocks, "gsc": found, "review": rev, "summary": summ, "keywords": extra["usecases"]}, ensure_ascii=False, indent=1, default=str))
     _finish(args, text, f"New-term radar {date.today()}")
@@ -116,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg["judge"]["model"] = ""
     state = Path(args.state)
     state.mkdir(parents=True, exist_ok=True)
+    llm.configure(cfg.get("llm"))
+    trends.configure(cfg.get("trends"), state)
     return cmd_sources(args, cfg, state) if args.command == "sources" else cmd_daily(args, cfg, state)
 
 

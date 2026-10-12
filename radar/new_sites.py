@@ -15,6 +15,7 @@ to the name judge with the other leads ("hailuo").
 """
 from __future__ import annotations
 
+import os
 import re
 from datetime import date, timedelta
 from pathlib import Path
@@ -60,6 +61,8 @@ def _calls(c: dict, today: date) -> list[dict]:
 def new_sites(cfg: dict, state: Path, today: date | None = None) -> dict:
     c = cfg["new_sites"]
     today = today or date.today()
+    if not os.environ.get("AISA_API_KEY", "").strip():
+        return {"skipped": True, "reason": "needs AISA_API_KEY (DataForSEO whois overview); no free equivalent"}
     data, cost = aisa.call_all(_calls(c, today))
     sites: dict[str, dict] = {}
     for name in c["queries"]:

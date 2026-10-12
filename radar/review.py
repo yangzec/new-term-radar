@@ -20,7 +20,7 @@ import sqlite3
 import statistics
 from datetime import date, timedelta
 
-from . import aisa, store
+from . import store, trends
 
 BEFORE_DAYS = 30
 MAX_VARIANTS = 3      # each costs one Trends task ($0.0012 in October 2026)
@@ -96,13 +96,17 @@ def review(cfg: dict, conn: sqlite3.Connection, today: date | None = None) -> di
     if not due:
         return {"checked": [], "cost_micros": 0, "after_days": c["after_days"]}
     calls, plan = plan_calls(due, today, c["after_days"])
-    data, cost = aisa.call_all(calls)
+    data, cost = trends.fetch({c["call_id"]: (c["arguments"]["body"][0]["keywords"], c["arguments"]["body"][0]["date_from"],
+                                         c["arguments"]["body"][0]["date_to"]) for c in calls})
     checked = []
     for ids, term, first_seen, keys in plan:
         if not all(cid in data for cid in ids):
             continue   # stays due; the next run takes it again
-        per = {k: rose(settled(_series((data[cid].get("tasks") or [{}])[0]), today), first_seen) for cid, k in zip(ids, keys)}
+        per = {k: rose(settled([(d, v[0] if v else 0) for d, *v in data[cid]], today), first_seen) for cid, k in zip(ids, keys)}
         v, lead = verdict(per, first_seen)
         store.save_verdict(conn, term, v, lead, per, today)
         checked.append({"term": term, "first_seen": first_seen.isoformat(), "verdict": v, "lead_days": lead})
-    return {"checked": checked, "cost_micros": cost, "after_days": c["after_days"]}
+    out = {"checked": checked, "cost_micros": cost, "after_days": c["after_days"]}
+    if trends.last_errors:
+        out["trends_errors"] = trends.last_errors
+    return out
