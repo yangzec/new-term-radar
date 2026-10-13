@@ -12,8 +12,8 @@ A name ("SynthID Detector") has a short life as a keyword and belongs to someone
 ## Before you run anything
 
 1. Find the radar: `$NEW_TERM_RADAR_DIR` if set, else `~/new-term-radar`; clone https://github.com/zhuyansen/new-term-radar there if missing. Run every command from that directory.
-2. An AIsa key must be available, as `AISA_API_KEY` or from the AIsa CLI (`aisa login` stores it in `~/.aisa`): every lookup here is paid through it. Without it, stop and say so. A key comes from https://go.aisa.one/yansen-zhu.
-3. `GOANYAPI_API_KEY` is optional (a key comes from https://goanyapi.com/r/ga-95708898fb). With it the table also holds what people really searched together with each name, and reads the bigger rows from one country's settled series. Without it, tell the user that a "flat" reading is weaker evidence (see below).
+2. An AIsa key (`AISA_API_KEY`, or the AIsa CLI: `aisa login` stores it in `~/.aisa`; keys at https://aisa.one) pays for every lookup here. Without AIsa the radar still runs: the model steps use `XAI_API_KEY` or a logged-in `grok-cli` (`llm.provider`, auto by default), Google Trends comes from pytrends (`trends.provider`), and X posts, search volumes and related queries can be dropped into `state/inbox/YYYY-MM-DD/` as `x_posts.json`, `volumes.json` and `related.json` (format in the README; `requests.json` there lists what a run was missing). Only the weekly new-site signal needs AIsa. If neither is set up, stop and say so; if a source is missing, the table opens with an "incomplete" line that says which.
+3. `GOANYAPI_API_KEY` is optional (a key comes from https://goanyapi.com). With it the table also holds what people really searched together with each name, and reads the bigger rows from one country's settled series. Without it, tell the user that a "flat" reading is weaker evidence (see below).
 4. If there is no `config.json`, copy `config.example.json`.
 
 ## Step 1: pick the names

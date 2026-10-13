@@ -10,7 +10,7 @@ Produce one report: the names of new AI models, products and repositories seen i
 ## Before you run anything
 
 1. Find the radar. Use `$NEW_TERM_RADAR_DIR` if set, else `~/new-term-radar`. If neither exists, clone it: `git clone https://github.com/zhuyansen/new-term-radar ~/new-term-radar`. Run every command from that directory. Python 3.10 or newer; no packages to install.
-2. Check an AIsa key is available: `AISA_API_KEY`, or the AIsa CLI logged in (`ls ~/.aisa/key`). Without one only the free signals run (Hugging Face, GitHub, sitemaps), no X posts are read, and nothing judges which terms are names. Say so in the report. A key comes from https://go.aisa.one/yansen-zhu.
+2. Check which sources are available. An AIsa key (`AISA_API_KEY`, or the AIsa CLI logged in: `ls ~/.aisa/key`; keys at https://aisa.one) covers everything. Without AIsa the radar still runs: the model steps use `XAI_API_KEY` or a logged-in `grok-cli` (`llm.provider`, auto by default), Google Trends comes from pytrends (`trends.provider`), and X posts, search volumes and related queries can be dropped into `state/inbox/YYYY-MM-DD/` as `x_posts.json`, `volumes.json` and `related.json` (format in the README; `requests.json` there lists what a run was missing). Only the weekly new-site signal needs AIsa. With none of these only the free signals run (Hugging Face, GitHub, sitemaps), no X posts are read, and nothing judges which terms are names. Say in the report which sources ran.
 3. If there is no `config.json`, copy `config.example.json` to `config.json`. Tell the user they are on the example list of X accounts and sitemaps and can edit it.
 
 ## Cost and time, say this first

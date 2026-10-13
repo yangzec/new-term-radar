@@ -285,3 +285,49 @@ def test_has_key_never_raises(monkeypatch, tmp_path):
     assert aisa.has_key() is False
     monkeypatch.setenv("AISA_API_KEY", "k")
     assert aisa.has_key() is True
+
+
+class EmptyTrends(FakeTrends):
+    def __init__(self, empties):
+        super().__init__()
+        self.empties = empties
+
+    def interest_over_time(self):
+        import pandas as pd
+        if self.empties:
+            self.empties -= 1
+            return pd.DataFrame()
+        return super().interest_over_time()
+
+
+def test_pytrends_empty_series_is_retried_once_then_a_failure_and_never_cached(tmp_path, monkeypatch):
+    pytest.importorskip("pytrends")
+    monkeypatch.delenv("AISA_API_KEY")
+    monkeypatch.setattr(trends.aisa, "has_key", lambda: False)
+    trends.configure({"delay": 0, "backoff": 0, "retries": 2}, tmp_path)
+    FakeTrends.calls = 0
+    monkeypatch.setattr("pytrends.request.TrendReq", lambda **kw: EmptyTrends(empties=5))
+    out, _ = trends.fetch({"s": (["d2r mobile"], "2026-10-01", "2026-10-03")})
+    assert out == {} and FakeTrends.calls == 2 and "empty series" in trends.last_errors[0]
+    assert not list((tmp_path / "trends_cache").rglob("*.json"))
+    monkeypatch.setattr("pytrends.request.TrendReq", lambda **kw: EmptyTrends(empties=1))
+    out, _ = trends.fetch({"s": (["d2r mobile"], "2026-10-01", "2026-10-03")})
+    assert out["s"][0] == (date(2026, 10, 1), 1) and not trends.last_errors
+
+
+def test_an_empty_series_in_the_cache_is_not_trusted(tmp_path, monkeypatch):
+    pytest.importorskip("pytrends")
+    monkeypatch.delenv("AISA_API_KEY")
+    monkeypatch.setattr(trends.aisa, "has_key", lambda: False)
+    trends.configure({"delay": 0, "backoff": 0}, tmp_path)
+    cp = trends._cache_path(["x"], "2026-10-01", "2026-10-03")
+    cp.parent.mkdir(parents=True)
+    cp.write_text("[]")
+    monkeypatch.setattr("pytrends.request.TrendReq", lambda **kw: FakeTrends())
+    out, _ = trends.fetch({"s": (["x"], "2026-10-01", "2026-10-03")})
+    assert out["s"]
+
+
+def test_pytrends_window_ends_before_the_unsettled_days():
+    assert trends.settled_window("2026-10-14", date(2026, 10, 14)) == "2026-10-11"
+    assert trends.settled_window("2026-09-01", date(2026, 10, 14)) == "2026-09-01"

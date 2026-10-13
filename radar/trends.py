@@ -16,7 +16,7 @@ import hashlib
 import json
 import os
 import time
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from . import aisa
@@ -67,13 +67,26 @@ def _cache_path(kws: list[str], f: str, t: str) -> Path | None:
     return _cache_dir / date.today().isoformat() / f"{h}.json"
 
 
+EMPTY_RETRIES = 1     # an empty answer is tried once more before it counts as a failure
+
+
+def _empty(rows: list[tuple]) -> bool:
+    """No rows, or every value 0: Google sometimes answers a throttled request with an empty
+    frame instead of a 429 (seen for "d2r mobile" on 2026-10-14, which read fine minutes
+    later), so an empty series is a failed lookup, not a reading of "no interest"."""
+    return not rows or not any(any(v) for _, *v in rows)
+
+
 def _pytrends_one(client, kws: list[str], f: str, t: str) -> list[tuple]:
     global _last
     cp = _cache_path(kws, f, t)
     if cp and cp.exists():
-        return [(date.fromisoformat(r[0]), *r[1:]) for r in json.loads(cp.read_text())]
-    err = None
-    for attempt in range(_cfg["retries"]):
+        cached = [(date.fromisoformat(r[0]), *r[1:]) for r in json.loads(cp.read_text())]
+        if not _empty(cached):
+            return cached
+    err, empties = None, 0
+    attempt = 0
+    while True:
         wait = _cfg["delay"] - (time.time() - _last)
         if wait > 0:
             time.sleep(wait)
@@ -81,19 +94,41 @@ def _pytrends_one(client, kws: list[str], f: str, t: str) -> list[tuple]:
             _last = time.time()
             client.build_payload(kws, timeframe=f"{f} {t}", geo=_cfg["geo"])
             df = client.interest_over_time()
-            break
+            rows = [] if df is None or df.empty else [
+                (idx.date(), *[int(df[k].iloc[i]) if k in df else 0 for k in kws]) for i, idx in enumerate(df.index)]
+            if not _empty(rows):
+                break
+            empties += 1
+            if empties > EMPTY_RETRIES:
+                raise RuntimeError(f"pytrends: empty series for {' / '.join(kws)} (no data or a soft rate limit)")
+            time.sleep(_cfg["backoff"])
+            continue
+        except RuntimeError as exc:
+            if str(exc).startswith("pytrends: empty"):
+                raise
+            err = exc
         except Exception as exc:  # noqa: BLE001  (pytrends raises its own and requests' errors)
             err = exc
-            if attempt + 1 < _cfg["retries"]:
-                time.sleep(_cfg["backoff"] * (attempt + 1))
-    else:
-        raise RuntimeError(f"pytrends: {type(err).__name__}: {str(err)[:120]}")
-    rows = [] if df is None or df.empty else [
-        (idx.date(), *[int(df[k].iloc[i]) if k in df else 0 for k in kws]) for i, idx in enumerate(df.index)]
+        attempt += 1
+        if attempt >= _cfg["retries"]:
+            raise RuntimeError(f"pytrends: {type(err).__name__}: {str(err)[:120]}")
+        time.sleep(_cfg["backoff"] * attempt)
     if cp:
         cp.parent.mkdir(parents=True, exist_ok=True)
         cp.write_text(json.dumps([[d.isoformat(), *v] for d, *v in rows]))
     return rows
+
+
+UNSETTLED_DAYS = 2    # as review.UNSETTLED_DAYS
+
+
+def settled_window(t: str, today: date | None = None) -> str:
+    """Google rescales every series to its own peak (100). Its last two days are unsettled
+    and often jump to 100 for any term ("d2r mobile" on 2026-10-14: 0 for 88 days, then 51,
+    100), which squashes every settled day to 0; the readers drop those days and are left
+    with nothing. Asking pytrends for a window that ends before them keeps the scale honest."""
+    end = (today or date.today()) - timedelta(days=UNSETTLED_DAYS + 1)   # readers keep days < today - 2
+    return min(t, end.isoformat())
 
 
 def _pytrends(req: dict) -> tuple[dict, int, list[str]]:
@@ -102,7 +137,7 @@ def _pytrends(req: dict) -> tuple[dict, int, list[str]]:
     out, errors = {}, []
     for cid, (kws, f, t) in req.items():
         try:
-            out[cid] = _pytrends_one(client, kws, f, t)
+            out[cid] = _pytrends_one(client, kws, f, settled_window(t))
         except RuntimeError as exc:
             errors.append(str(exc))
             if "429" in str(exc) or "TooManyRequests" in str(exc):
