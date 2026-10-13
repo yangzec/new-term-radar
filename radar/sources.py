@@ -90,7 +90,7 @@ def x_new(cfg: dict, state: Path) -> dict:
     supplied = (inbox.load(cfg, state, "x_posts") or {}).get("users") or {}
     supplied = {k.lower().lstrip("@"): v for k, v in supplied.items()}
     rest = [h for h in handles if h.lower() not in supplied]
-    if rest and not os.environ.get("AISA_API_KEY", "").strip():
+    if rest and not aisa.has_key():
         inbox.request(cfg, state, "x_users", rest)
         rest = []
     if not supplied and not rest:

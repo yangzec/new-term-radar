@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from radar import config, i18n
+from radar import config, goanyapi, i18n
 
 
 @pytest.fixture(autouse=True)
@@ -15,6 +15,10 @@ def english(monkeypatch):
     llm.configure({})
     monkeypatch.setattr(llm, "cli_ready", lambda: False)   # a real grok-cli on the box must not be picked
     trends.configure({})
+
+    def no_network(*a, **k):
+        raise goanyapi.GoAnyError("no network in tests")
+    monkeypatch.setattr(goanyapi, "call", no_network)
 
 
 @pytest.fixture

@@ -37,7 +37,7 @@ def configure(c: dict | None, state: Path | None = None) -> None:
 def provider() -> str:
     p = _cfg["provider"]
     if p == "auto":
-        return "aisa" if os.environ.get("AISA_API_KEY", "").strip() else "pytrends"
+        return "aisa" if aisa.has_key() else "pytrends"
     return p
 
 

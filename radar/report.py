@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from . import config, judge
+from . import config, judge, usecases
 from .i18n import t
 
 SHOWN = 20
@@ -195,6 +195,8 @@ def keyword_table(cfg: dict, uc: dict) -> list[str]:
     if not uc.get("names"):
         return lines + [t("uc_none")]
     c = cfg["usecases"]
+    if usecases.degraded(uc):
+        lines += [t("uc_degraded"), ""]
     lines += [t("uc_intro", names=", ".join(uc["names"]), proposed=uc["proposed"], relevant=uc["relevant"], kept=uc["kept"], min=c["min_volume"],
                 month=uc["volume_month"] or "?"),
               t("uc_bench", bench=uc["benchmark"], bench_daily=uc["bench_daily"]) if uc.get("bench_daily") else t("uc_bench_none", bench=uc["benchmark"]), "",
@@ -209,10 +211,15 @@ def keyword_table(cfg: dict, uc: dict) -> list[str]:
             f"{', '.join(r['names']) or t('dash')} | {t('dash') if none else t('uc_yes' if r['new'] else 'uc_no')} | "
             f"{r['per_day'] if 'per_day' in r else t('dash')} | {r.get('started') or t('dash')} | {peak} | "
             f"{t('dash') if none else r['peak_day']} | {'×' + str(r['momentum']) if r.get('momentum') is not None else t('dash')} | "
-            f"{t('uc_now_none') if none else t('uc_now_' + r['now'])} | {t('uc_' + r['decision'])} |")
+            f"{t('uc_now_none') if none else t('uc_now_' + r['now'])}{' (' + uc['geo'] + ')' if r.get('trend_geo') else ''} | "
+            f"{t('uc_' + r['decision'])} |")
     lines += ["", t("uc_rules", min_daily=c["min_daily"])]
     if any(r["kind"] == "generic" and r["brand"] for r in uc["rows"]):
         lines.append(t("uc_brand_note"))
+    if any(r.get("trend_geo") for r in uc["rows"]):
+        lines.append(t("uc_geo_note", geo=uc["geo"]))
+    if uc.get("country_errors"):
+        lines.append(t("uc_geo_err", names="; ".join(uc["country_errors"])))
     if any(r.get("source") == "searched" for r in uc["rows"]):
         lines.append(t("uc_searched_note"))
     said = [f"- **{r['phrase']}** ({', '.join(r['names'])}): “{_cell(r['evidence'])}”" for r in uc["rows"]
@@ -225,8 +232,16 @@ def keyword_table(cfg: dict, uc: dict) -> list[str]:
         lines += ["", t("uc_cosearch_h") + " " + ", ".join(t("uc_cosearch_item", term=x["term"], name=x["with"]) for x in uc["cosearch"])]
     if uc.get("no_evidence"):
         lines += ["", t("uc_no_evidence", names=", ".join(uc["no_evidence"]))]
+    if uc.get("posts_error"):
+        lines += ["", t("uc_posts_err", why=uc["posts_error"])]
     if uc.get("related_errors"):
         lines += ["", t("uc_related_err", names="; ".join(uc["related_errors"]))]
+    if uc.get("trends_errors"):
+        lines += ["", t("uc_trends_err", provider=uc.get("trends", ""), why="; ".join(uc["trends_errors"]))]
+    if uc.get("names") and uc.get("llm") == "":
+        lines += ["", t("uc_llm_off")]
+    if uc.get("inbox_missing"):
+        lines += ["", t("uc_inbox_missing", what="; ".join(f"{k}: {', '.join(v)}" for k, v in uc["inbox_missing"].items()))]
     elif not uc.get("related"):
         lines += ["", t("uc_related_off")]
     return lines

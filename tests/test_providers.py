@@ -258,3 +258,30 @@ def test_requests_are_pruned_even_when_nothing_new_is_asked(cfg, tmp_path):
     _write(tmp_path, "x_posts", {"search": {"tubetext": SEARCH}}, TODAY)
     inbox.request(cfg, tmp_path, "x_search", [], TODAY)
     assert json.loads((inbox.folder(cfg, tmp_path, TODAY) / "requests.json").read_text()) == {"x_search": []}
+
+
+def test_incomplete_banner_flags_our_providers_gaps():
+    base = {"names": ["n"], "llm": "grok-cli"}
+    assert not usecases.degraded(base)
+    assert usecases.degraded(dict(base, trends_errors=["pytrends: 429"]))
+    assert usecases.degraded(dict(base, llm=""))
+    assert usecases.degraded(dict(base, inbox_missing={"volumes": ["a b"]}))
+
+
+def test_keywords_on_request_reads_the_inbox_and_leaves_state_alone(cfg, tmp_path, monkeypatch):
+    monkeypatch.delenv("AISA_API_KEY")
+    monkeypatch.setattr(usecases.aisa, "has_key", lambda: False)
+    _uc_fakes(monkeypatch)
+    _write(tmp_path, "x_posts", {"search": {"d2r mobile": SEARCH}}, TODAY)
+    uc = usecases.run(cfg, tmp_path, ["d2r mobile"], {}, TODAY, on_request=True)
+    assert uc["names"] == ["d2r mobile"] and uc["no_evidence"] == [] and uc["inbox_missing"] == {"volumes": ["ai phone agent"]}
+    assert not (tmp_path / "usecases.json.gz").exists()
+
+
+def test_has_key_never_raises(monkeypatch, tmp_path):
+    from radar import aisa
+    monkeypatch.delenv("AISA_API_KEY")
+    monkeypatch.setattr(aisa.Path, "home", lambda: tmp_path)
+    assert aisa.has_key() is False
+    monkeypatch.setenv("AISA_API_KEY", "k")
+    assert aisa.has_key() is True

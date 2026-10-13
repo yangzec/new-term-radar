@@ -72,7 +72,7 @@ def provider() -> str:
         return "xai"
     if cli_ready():
         return "grok-cli"
-    return "aisa" if os.environ.get("AISA_API_KEY", "").strip() else ""
+    return "aisa" if aisa.has_key() else ""
 
 
 def available() -> bool:
@@ -81,7 +81,7 @@ def available() -> bool:
         return cli_ready()
     if p == "xai":
         return bool(os.environ.get(_cfg["key_env"], "").strip())
-    return p == "aisa" and bool(os.environ.get("AISA_API_KEY", "").strip())
+    return p == "aisa" and aisa.has_key()
 
 
 JSON_HINT = "\n\nAnswer with the JSON only: no prose, no markdown fences."

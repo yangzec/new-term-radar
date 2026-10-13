@@ -28,7 +28,7 @@
   "breakout": {"window_days": 14, "min_stars": 300, "velocity_min": 200, "delta_min": 400},
   "new_sites": {"queries": {"ai": "%ai%", "video": "%video%"}, "weekday": 0},
   "review": {"after_days": 14, "per_day": 5},
-  "usecases": {"per_day": 5, "model": "claude-sonnet-4-6", "benchmark": "gpts", "min_volume": 50, "min_daily": 300, "related": true, "related_geo": "US"},
+  "usecases": {"per_day": 5, "model": "claude-sonnet-4-6", "benchmark": "gpts", "min_volume": 50, "min_daily": 300, "related": true, "related_geo": "US", "country_trends": true, "country_min_volume": 1000, "country_max": 8},
 
   "llm": {"provider": "auto", "model": "grok-4-1-fast-non-reasoning", "cli_model": "", "cli_timeout": 180},
   "trends": {"provider": "auto", "delay": 8, "retries": 3, "backoff": 60},

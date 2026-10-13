@@ -611,6 +611,7 @@ def test_with_a_key_related_queries_join_the_table_and_other_names_become_leads(
         dict(c, relevance=0.9, is_name=c["phrase"] == "gpt image 2.5") for c in cands])
     monkeypatch.setattr(usecases, "volumes", lambda phrases, loc, *a: (
         {p: {"volume": 9000, "month": "2026-08"} for p in phrases if p != "nobody searches this"}, 90000))
+    cfg["usecases"]["country_trends"] = False
     uc = usecases.run(cfg, tmp_path, ["synthid detector"], {}, TODAY)
     rows = {r["phrase"]: r for r in uc["rows"]}
     assert rows["ai photo detector"]["source"] == "searched" and "gpt image 2.5" not in rows
@@ -618,6 +619,7 @@ def test_with_a_key_related_queries_join_the_table_and_other_names_become_leads(
     assert uc["tails"] == {"synthid detector": ["synthid detector online"]} and uc["cost_micros"] == 106200
     text = "\n".join(report.keyword_table(cfg, uc))
     assert "| **ai photo detector** 🔎 |" in text and "gpt image 2.5 (with synthid detector)" in text and "synthid detector online" in text
+    assert "incomplete today" not in text
     assert {"term": "gpt image 2.5", "kinds": ["cosearch"]}.items() <= report.usecase_leads(uc)[-1].items()
 
 
@@ -630,12 +632,223 @@ def test_without_a_key_the_table_says_the_source_is_off_and_a_failure_is_reporte
     def down(name, geo):
         raise usecases.goanyapi.GoAnyError("HTTP 502")
     monkeypatch.setattr(usecases.goanyapi, "related_queries", down)
+    cfg["usecases"]["country_trends"] = False
     uc = usecases.run(cfg, tmp_path / "b", ["synthid detector"], {}, TODAY)
     assert uc["related_errors"] == ["synthid detector: HTTP 502"] and uc["kept"] == 2
     assert "HTTP 502" in "\n".join(report.keyword_table(cfg, uc))
+
+
+def test_other_names_leave_out_old_products_siblings_and_spelling_variants():
+    # what the first real run kept beside filmcraft and pdfcraft (2026-10-13)
+    viewed = [{"phrase": p, "is_name": True, "rising": True, "established": old} for p, old in (
+        ("premiere pro", True), ("davinci resolve", True), ("photocraft github", False), ("gpt image 2.5", False),
+        ("adobe artcraft", False), ("artcraft adobe", False))]
+    assert [x["term"] for x in usecases.other_names("filmcraft", viewed, ["photocraft", "filmcraft"])] == ["gpt image 2.5", "adobe artcraft"]
+    tails, cands = usecases.split_related("pdfcraft", {"rising": ["pdf craft", "pdf-craft review", "merge pdf files"], "top": []})
+    assert tails == ["pdf craft", "pdf-craft review"] and [c["phrase"] for c in cands] == ["merge pdf files"]
+
+
+def test_every_name_gets_the_country_series_and_the_cap_is_on_generic_terms(cfg, monkeypatch):
+    rows = [{"phrase": f"name{i}", "kind": "name"} for i in range(5)] + \
+           [{"phrase": f"g{v}", "kind": "generic", "volume": v} for v in (27100, 22200, 8100, 6600, 900)]
+    cfg["usecases"]["country_max"] = 3
+    asked = []
+    monkeypatch.setattr(usecases.goanyapi, "daily_series", lambda term, geo: (asked.append(term) or [(TODAY, 1)], 6000))
+    out, cost, errors = usecases.country_series(rows, cfg["usecases"])
+    assert sorted(asked) == sorted([f"name{i}" for i in range(5)] + ["g27100", "g22200", "g8100"]) and cost == 48000 and not errors
 
 
 def test_other_names_must_be_rising_and_not_the_same_family():
     viewed = [{"phrase": p, "is_name": True, "rising": r} for p, r in (
         ("gpt image 2.5", True), ("google nano banana", True), ("nano banana pro", True), ("google gemini", False), ("mistral large 4", True))]
     assert [x["term"] for x in usecases.other_names("nano banana 2.1", viewed)] == ["gpt image 2.5", "mistral large 4"]
+
+
+# --- one country's settled series for the rows that matter -------------------------------------
+
+def _month(values):
+    """A 30-day series ending today, as goanyapi.daily_series returns it."""
+    return [(TODAY - timedelta(days=len(values) - 1 - i), v) for i, v in enumerate(values)]
+
+
+def test_an_established_term_80_percent_up_for_five_days_is_a_rise_in_the_country_series():
+    # "photoshop alternative" in the US around PhotoCraft: about 50, then 77, 86, 83, 100, 94, and 79 on the partial day
+    points = _month([52, 48, 50, 47, 55, 51, 49, 53, 50, 46, 52, 50, 48, 54, 49, 51, 50, 47, 53, 46, 47, 53, 57, 55, 77, 86, 83, 100, 94, 79])
+    s = usecases.shape(points, TODAY, usecases.COUNTRY)
+    assert s["rose"] and not s["new"] and s["now"] == "rising" and s["started"] == "2026-10-07" and s["momentum"] >= 1.4
+
+
+def test_a_flat_country_series_stays_flat():
+    assert usecases.shape(_month([30, 34, 28, 31] * 7 + [33, 29]), TODAY, usecases.COUNTRY)["now"] == "flat"
+
+
+def test_names_and_big_generic_terms_take_their_shape_from_the_country(cfg, tmp_path, monkeypatch):
+    _fake_usecase_network(monkeypatch)
+    monkeypatch.setenv("GOANYAPI_API_KEY", "k")
+    cfg["usecases"]["related"] = False
+    up = _month([50] * 24 + [77, 86, 83, 100, 94, 79])
+    asked = []
+
+    def daily_series(term, geo):
+        asked.append(term)
+        if term == "synthid detector":
+            raise usecases.goanyapi.GoAnyError("HTTP 502")
+        return up, 6000
+    monkeypatch.setattr(usecases.goanyapi, "daily_series", daily_series)
+    uc = usecases.run(cfg, tmp_path, ["synthid detector"], {}, TODAY)
+    rows = {r["phrase"]: r for r in uc["rows"]}
+    # The lookups run three at a time, so the order they are recorded in is the threads' own.
+    assert sorted(asked) == ["ai image detector", "photoshop alternative", "synthid detector"]
+    assert rows["ai image detector"]["trend_geo"] and rows["ai image detector"]["now"] == "rising"
+    assert rows["ai image detector"]["decision"] == "prioritize"      # flat worldwide, up in the US
+    assert "trend_geo" not in rows["synthid detector"] and uc["country_errors"] == ["synthid detector: HTTP 502"]
+    text = "\n".join(report.keyword_table(cfg, uc))
+    assert "still rising (US)" in text and "worldwide data used instead: synthid detector" in text
+    assert "This table is incomplete today" in text
+
+
+def test_small_generic_terms_are_not_worth_a_country_lookup(cfg):
+    rows = [{"phrase": "a", "kind": "generic", "volume": 300}, {"phrase": "b", "kind": "generic", "volume": 5000}, {"phrase": "n", "kind": "name"}]
+    asked = []
+    import radar.goanyapi as g
+    orig = g.daily_series
+    g.daily_series = lambda term, geo: (asked.append(term) or [], 0)
+    try:
+        usecases.country_series(rows, cfg["usecases"])
+    finally:
+        g.daily_series = orig
+    assert asked == ["n", "b"]
+
+
+def test_started_rising_is_the_run_that_holds_the_peak_not_an_earlier_blip():
+    # a one-day blip on 10-01, then the real rise from 10-07
+    points = _month([20] * 19 + [45] + [20] * 5 + [70, 100, 68, 51, 42])
+    s = usecases.shape(points, TODAY, usecases.COUNTRY)
+    assert s["rose"] and s["started"] == "2026-10-08" and s["peak_day"] == "2026-10-09"
+
+
+def test_only_things_are_read_for_generic_terms_not_words_that_surged():
+    today = [{"term": "mcd", "kinds": ["github"], "named": 0.75}, {"term": "kr.co.klisten.api", "kinds": ["sitemap"], "named": 0.78},
+             {"term": "photocraft", "kinds": ["breakout"], "named": 0.95}, {"term": "dots", "kinds": ["breakout"], "named": 0.65},
+             {"term": "hailuo", "kinds": ["newsite", "sitemap"]}]
+    recent = [{"term": "qwen image 2.1", "kinds": ["hf"], "named": 0.96}, {"term": "use rea", "kinds": ["x"], "named": 0.72},
+              {"term": "photocraft", "kinds": ["x"], "named": 0.9}]
+    assert usecases.names_to_read(today, recent) == ["photocraft", "hailuo", "qwen image 2.1"]
+
+
+def test_a_failed_post_search_costs_one_name_its_posts_not_the_step(monkeypatch):
+    def call(calls):
+        if "photocraft" in calls[0]["arguments"]["query"]:
+            raise usecases.aisa.AisaError("HTTP 504: <html><h1>504 Gateway Time-out</h1></html>")
+        return {"s": {"tweets": [{"text": "check any image", "likeCount": 900, "author": {"userName": "a"}}]}}, 3000
+    monkeypatch.setattr(usecases.aisa, "call", call)
+    monkeypatch.setattr(usecases, "_readme", lambda repo: "PhotoCraft opens real PSD files")
+    ev, cost = usecases.evidence(["photocraft", "synthid detector"], {"photocraft": "storytold/photocraft"}, TODAY)
+    assert cost == 3000 and ev["photocraft"]["readme"] and ev["photocraft"]["posts"] == []
+    assert ev["photocraft"]["error"] == "HTTP 504: 504 Gateway Time-out" and len(ev["synthid detector"]["posts"]) == 1
+
+
+# --- names someone asks about: the `keywords` command and the MCP tool ---------------------------
+
+def test_keywords_on_request_reads_every_name_now_and_leaves_the_record_alone(cfg, tmp_path, monkeypatch):
+    _fake_usecase_network(monkeypatch)
+    uc, text = cli.keyword_table(cfg, tmp_path, ["SynthID Detector ", "synthid detector", ""], {})
+    assert uc["names"] == ["synthid detector"] and "| **ai image detector** |" in text
+    again, _ = cli.keyword_table(cfg, tmp_path, ["synthid detector"], {})
+    assert again["names"] == ["synthid detector"]                 # asked again, read again
+    assert not (tmp_path / "usecases.json.gz").exists()           # the daily run's read-twice record is untouched
+    many, _ = cli.keyword_table(cfg, tmp_path, [f"name {i}" for i in range(20)], {})
+    assert len(many["names"]) == usecases.ASKED_MAX
+
+
+def test_leads_command_lists_what_was_kept(tmp_path, capsys):
+    conn = store.connect(tmp_path)
+    store.record(conn, [_lead("strata", ["breakout"], named=0.9)], date.today() - timedelta(days=2))
+    store.record(conn, [_lead("old one", ["x"])], date.today() - timedelta(days=30))
+    data = cli.kept_leads(tmp_path, 7)
+    assert [r["term"] for r in data["leads"]] == ["strata"] and data["hit_rates"]["pending"] == 2
+    assert cli.main(["leads", "--state", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "strata  [breakout]" in out and "1 leads in the last 7 days" in out
+
+
+# --- the MCP server -----------------------------------------------------------------------------
+
+def test_mcp_tools_answer_and_never_print(cfg, tmp_path, monkeypatch, capsys):
+    import pytest
+    pytest.importorskip("mcp")
+    from radar import mcp_server
+    (tmp_path / "config.json").write_text(json.dumps({"x_accounts": {"labs": ["a"]}}))
+    monkeypatch.setenv("RADAR_CONFIG", str(tmp_path / "config.json"))
+    monkeypatch.setenv("RADAR_STATE", str(tmp_path / "state"))
+    store.record(store.connect(tmp_path / "state"), [_lead("photocraft", ["breakout"], named=0.95)], date.today())
+    assert [r["term"] for r in mcp_server.recent_leads(7)["leads"]] == ["photocraft"]
+
+    _fake_usecase_network(monkeypatch)
+    out = mcp_server._keyword_table(["synthid detector"], {})
+    assert "| **ai image detector** |" in out["table_markdown"] and out["incomplete"] is False and out["cost_usd"] == 0.1
+
+    monkeypatch.setattr(cli.sources, "x_new", lambda cfg, state: {"posts": 400, "cost_micros": 3000, "terms": [
+        {"term": "qwen3.9", "recent": 2, "note": "X: 2 accounts", "examples": ["@a: Qwen3.9 is out"]}]})
+    monkeypatch.setattr(cli.sources, "hf_new", lambda cfg, state: {"models": 100, "terms": []})
+    monkeypatch.setattr(report.judge, "score", lambda rows, model: {"judged": 0})
+    ran = mcp_server._run("sources", [])
+    assert ran["wrote_report"] and "**qwen3.9**" in ran["report_markdown"]
+    assert capsys.readouterr().out == ""        # stdout is the protocol channel
+
+
+def test_skills_have_a_name_and_a_description():
+    root = Path(__file__).resolve().parents[1] / "skills"
+    for name in ("new-term-radar", "ai-listening", "seo-new-keywords-research"):
+        text = (root / name / "SKILL.md").read_text()
+        head = re.match(r"---\nname: (\S+)\ndescription: (.+)\n---\n", text)
+        assert head and head.group(1) == name and 100 < len(head.group(2)) < 1024
+        assert "python -m radar" in text and "AISA_API_KEY" in text
+        # Claude Code replaces $0, $1 ... in a skill's text with the user's arguments: "$0.05" came out
+        # as "<what the user typed>.05" on the first real run. Amounts are written "0.05 USD".
+        assert not re.search(r"\$\d", text)
+
+
+def test_the_aisa_key_comes_from_the_environment_or_the_cli_login(tmp_path, monkeypatch):
+    from radar import aisa
+    monkeypatch.setattr(aisa.Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("AISA_API_KEY", raising=False)
+    import pytest
+    with pytest.raises(aisa.AisaError, match="aisa login"):
+        aisa.key()
+    (tmp_path / ".aisa").mkdir()
+    (tmp_path / ".aisa" / "key").write_text("from-cli\n")
+    assert aisa.key() == "from-cli"
+    monkeypatch.setenv("AISA_API_KEY", "from-env")
+    assert aisa.key() == "from-env"
+
+
+def test_every_manifest_carries_the_same_version():
+    # A release is one number in five places; the registry rejects a server.json whose
+    # version PyPI does not have.
+    import radar
+    root = Path(__file__).resolve().parents[1]
+    server = json.loads((root / "server.json").read_text())
+    plugin = json.loads((root / ".claude-plugin" / "plugin.json").read_text())
+    pyproject = re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(), re.M).group(1)
+    assert {pyproject, server["version"], server["packages"][0]["version"], plugin["version"]} == {radar.__version__}
+    assert len(server["description"]) <= 100                                  # the registry's limit
+    assert f"mcp-name: {server['name']} -->" in (root / "README.md").read_text()   # how the registry checks who owns the PyPI package
+
+
+def test_the_mcp_command_says_what_is_missing(monkeypatch, capsys):
+    import builtins
+    real = builtins.__import__
+
+    def without_mcp(name, *args, **kwargs):
+        if name == "mcp" or name.startswith("mcp."):
+            raise ImportError(name)
+        return real(name, *args, **kwargs)
+
+    import sys
+    import radar
+    monkeypatch.delitem(sys.modules, "radar.mcp_server", raising=False)   # an earlier test may have loaded it;
+    monkeypatch.delattr(radar, "mcp_server", raising=False)               # the package keeps its own reference
+    monkeypatch.setattr(builtins, "__import__", without_mcp)
+    assert cli.main(["mcp"]) == 1
+    assert "new-term-radar[mcp]" in capsys.readouterr().err

@@ -13,6 +13,14 @@ Signals:
   ⑤ review    leads from 14 days ago checked in Google Trends; hit rate per signal (trends.provider: aisa or pytrends)
   usecases    the generic terms behind today's names, sized against a benchmark keyword (llm: xai/aisa; trends; inbox)
 
+  python -m radar keywords "name one" "name two" [--repo "name one=owner/repo"] [--json]
+  python -m radar leads    [--days 7] [--json]
+  python -m radar mcp      the MCP server on stdio (needs the `mcp` package)
+
+`keywords` builds the keyword table for names you give it, now (about $0.05 a name plus
+$0.09 a call for the volume lookup). `leads` lists what the radar has kept, with the
+review's verdicts and the hit rate per signal; it costs nothing.
+
 `sources` runs only ① (they change by the hour) and writes a report only when there is a
 name or an error. `daily` runs everything; give it `--skip x,hf` when `sources` runs
 apart, and it lists the ① leads of the last day from the database instead.
@@ -82,8 +90,8 @@ def cmd_daily(args, cfg: dict, state: Path) -> int:
     extra = {"judge": judged, "record": run(lambda: {"recorded": store.record(conn, report.to_record(cfg, lead))})}
     # With ① run apart, the daily report lists what that job kept since yesterday.
     extra["recent_sources"] = run(lambda: {"rows": store.recent_sources(conn)}, not {"x", "hf"} <= args.skip)
-    # The names to read for their generic terms: today's new names, then yesterday's source leads.
-    names = [r["term"] for r in report.to_record(cfg, lead)] + [r["term"] for r in extra["recent_sources"].get("rows", [])]
+    # The names to read for their generic terms: things, not words that surged (usecases.names_to_read).
+    names = usecases.names_to_read(report.to_record(cfg, lead), extra["recent_sources"].get("rows", []))
     repos = {r["term"]: r["repo"] for r in lead if r.get("repo")}
     extra["usecases"] = run(lambda: usecases.run(cfg, state, list(dict.fromkeys(names)), repos),
                             "usecases" in args.skip or not cfg["usecases"]["per_day"])
@@ -99,9 +107,64 @@ def cmd_daily(args, cfg: dict, state: Path) -> int:
     return 0
 
 
+def keyword_table(cfg: dict, state: Path, names: list[str], repos: dict[str, str]) -> tuple[dict, str]:
+    """The keyword table for names someone asked about: (the data, the table in Markdown)."""
+    uc = usecases.run(cfg, state, [n.lower().strip() for n in names if n.strip()], {k.lower(): v for k, v in repos.items()}, on_request=True)
+    return uc, "\n".join(report.keyword_table(cfg, uc)).strip() + "\n"
+
+
+def kept_leads(state: Path, days: int) -> dict:
+    conn = store.connect(state)
+    return {"leads": store.leads(conn, days), "hit_rates": store.summary(conn)}
+
+
+def cmd_keywords(args, cfg: dict, state: Path) -> int:
+    repos = dict(r.split("=", 1) for r in args.repo)
+    uc, text = keyword_table(cfg, state, args.names, repos)
+    out = json.dumps(uc, ensure_ascii=False, indent=1, default=str) if args.json else text
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(out)
+    print(out)
+    return 0
+
+
+def cmd_leads(args, state: Path) -> int:
+    data = kept_leads(state, args.days)
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=1, default=str))
+        return 0
+    for r in data["leads"]:
+        verdict = f" · {r['verdict']}" + (f" ({r['days_ahead']} days ahead)" if r["days_ahead"] is not None else "") if r["verdict"] else ""
+        print(f"{r['first_seen']}  {r['term']}  [{', '.join(r['signals'])}]{verdict}  {r['note']}")
+    for kind, s in data["hit_rates"]["by_signal"].items():
+        print(f"hit rate {kind}: {s['hit']}/{s['checked']}")
+    print(f"{len(data['leads'])} leads in the last {args.days} days; {data['hit_rates']['pending']} awaiting review")
+    return 0
+
+
+def serve_mcp() -> int:
+    """`new-term-radar mcp`: the stdio MCP server under the package's own name, so a
+    client that only knows the PyPI name can start it (`uvx --with mcp new-term-radar mcp`)."""
+    try:
+        from . import mcp_server
+    except ImportError:
+        print('The MCP server needs the `mcp` package: pip install "new-term-radar[mcp]"', file=sys.stderr)
+        return 1
+    mcp_server.main()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="python -m radar", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("command", choices=["daily", "sources"])
+    if (sys.argv[1:] if argv is None else argv)[:1] == ["mcp"]:
+        return serve_mcp()
+    prog = "python -m radar" if __package__ == "radar" else "new-term-radar"  # installed, the package has another name
+    p = argparse.ArgumentParser(prog=prog, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("command", choices=["daily", "sources", "keywords", "leads"])
+    p.add_argument("names", nargs="*", help="for `keywords`: the names to read")
+    p.add_argument("--repo", action="append", default=[], metavar="NAME=OWNER/REPO", help="for `keywords`: a name's GitHub repository")
+    p.add_argument("--days", type=int, default=7, help="for `leads`: how far back")
+    p.add_argument("--json", action="store_true", help="for `keywords` and `leads`: print JSON")
     p.add_argument("--config", default="config.json")
     p.add_argument("--state", default="state", help="directory for radar.db and the snapshots")
     p.add_argument("--out", help="write the report (Markdown) here; `daily` also writes a .json beside it")
@@ -113,13 +176,19 @@ def main(argv: list[str] | None = None) -> int:
     unknown = args.skip - SKIPPABLE
     if unknown:
         p.error(f"--skip: unknown {sorted(unknown)}")
+    state = Path(args.state)
+    if args.command == "leads":
+        return cmd_leads(args, state)
+    if args.command == "keywords" and not args.names:
+        p.error("keywords: give at least one name")
     cfg = config.load(Path(args.config))
     if "judge" in args.skip:
         cfg["judge"]["model"] = ""
-    state = Path(args.state)
     state.mkdir(parents=True, exist_ok=True)
     llm.configure(cfg.get("llm"))
     trends.configure(cfg.get("trends"), state)
+    if args.command == "keywords":
+        return cmd_keywords(args, cfg, state)
     return cmd_sources(args, cfg, state) if args.command == "sources" else cmd_daily(args, cfg, state)
 
 

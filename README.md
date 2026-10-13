@@ -22,21 +22,7 @@ One example it was built around: [Niko1221/Strata](https://github.com/Niko1221/S
 
 ## What it reads
 
-```mermaid
-flowchart LR
-  X["① X accounts you follow"] --> M
-  HF["① Hugging Face trending"] --> M
-  GH["② GitHub: one repo taking off"] --> M
-  SM["③ Sitemaps of other sites"] --> M
-  NS["③ New domains that already rank"] --> M
-  M["merge terms"] --> J{"name of a new thing,\nor a common word?"}
-  J -->|name| R["report + radar.db"]
-  J -->|common word| O["listed at the bottom"]
-  GSC["④ your Search Console\n(optional)"] --> R
-  R -->|14 days later| T["⑤ Google Trends check"]
-  T --> H["hit rate per signal"]
-  H --> R
-```
+![How the radar works: four signals, a name judge, the keyword table, a daily report and a 14-day check; used from the command line, three Agent Skills or an MCP server](docs/radar.en.gif)
 
 | Signal | What it catches | Needs | Cost |
 |---|---|---|---|
@@ -47,7 +33,7 @@ flowchart LR
 | ③ New sites | Domains registered and first indexed in the last 90 days that already rank for 20+ keywords | AIsa key | about $0.13 per query, weekly |
 | ④ Search Console | Queries your site got impressions for, for the first time (fresh data) | your own Google token | free |
 | ⑤ Review | Each lead checked in Google Trends 14 days later, against its own baseline; hit rate and days ahead per signal | AIsa key | $0.0012 per search variant |
-| Keyword table | For the day's new names: the generic search terms behind them (what people do with the new thing), each sized and given a decision | AIsa key | about $0.15 a day for 5 names |
+| Keyword table | For the day's new names: the generic search terms behind them (what people do with the new thing), each sized and given a decision | AIsa key; [GoAnyAPI](https://goanyapi.com) key optional | about $0.15 a day for 5 names, $0.22 with GoAnyAPI |
 | Name judge | A small model scores every term: the name of one specific thing, or a common word? | AIsa key | a fraction of a cent per run |
 
 Prices are what AIsa charged in October 2026. With the example config (35 X accounts read three times a day, the keyword table for 5 names a day) a month costs about $15: $10 for the X reads, $5 for the keyword table. Read fewer accounts, or read them once a day, and it drops in proportion.
@@ -83,21 +69,35 @@ Each name is read twice, the day it appears and three days later, because on ann
 
 What to expect from it, from the first eight names we ran it on:
 
-- **The names rose; most generic terms did not, within five days.** PhotoCraft, Claude Haiku 5.5 and SynthID Detector all climbed clearly. Of the generic terms behind them, one moved: "photoshop alternative" ran about 80% above its level in the US for five days after PhotoCraft appeared. The worldwide daily series the table reads showed almost nothing of it (2, 1, 1, 2, 4, 2); a US daily series from another source showed it plainly. So a flat reading here does not prove a term did not move.
+- **The names rose; most generic terms did not, within five days.** PhotoCraft, Claude Haiku 5.5 and SynthID Detector all climbed clearly. Of the generic terms behind them, one moved: "photoshop alternative" ran about 80% above its level in the US for five days after PhotoCraft appeared. The worldwide daily series the table reads showed almost nothing of it (2, 1, 1, 2, 4, 2); a US daily series from another source showed it plainly. So a flat reading from the worldwide series does not prove a term did not move. With a GoAnyAPI key the bigger rows are read from the one-country series instead, where a rise is 1.5 times the earlier level held for three days; the same run then shows "photoshop alternative" as `still rising (US)`.
 - The table's dependable use today is to tell you **which existing demand a new thing serves and how big it is** ("ai image detector", about 2,500 searches a day). Whether generic terms follow the names is what the 14-day review will show, and we have no result yet.
 - For pure model releases (Claude Haiku 5.5, Nano Banana 2.1) the evidence was announcements and benchmarks, and the phrases proposed were weak ("ai coding assistant"). It works better for products and repositories that do one job.
 - **Google Trends' last two days are not settled.** For unrelated terms they came back as 0 and then 100, which reads as a spike. Our first pass was fooled by exactly this; every reader in the code now drops those two days, and a rise must last two days to count.
 - Google Ads volumes run about two months behind. Trends reads nothing reliable for terms under a few hundred searches a month.
 
+### When a source is missing or down
+
+The table is still written, but it gets thinner, and it says which part is missing:
+
+| What happens | What the table loses | The line it prints |
+|---|---|---|
+| No `GOANYAPI_API_KEY` (the default) | The 🔎 rows, each name's long-tails, the other names searched alongside, and the `(US)` readings. Phrases come from the model alone and every curve from the worldwide series, where a real move can read flat | "Related queries are off: set GOANYAPI_API_KEY…" |
+| GoAnyAPI's Trends is down (seen on its first day in use, 2026-10-12) | The same as having no key, for that run | "Related queries failed for: …" and "Country series failed, worldwide data used instead: …" |
+| AIsa's post search fails for a name (timeouts seen twice on 2026-10-13) | That name's posts. A repository still has its README; a model or product without one is left with the related queries only, and with no GoAnyAPI key it gets no generic terms that day | "The post search failed; this run used READMEs and related queries only: …" |
+| Neither posts nor a README for a name | Its generic terms; the name's own row stays | "No posts or README found for: …" |
+| No lead that day is a thing with a name score of 0.8 or more | The whole table | "Nothing to read today…" |
+| AIsa's search-volume or Trends lookup fails | The whole table: these two are not replaceable | the error, in place of the table |
+
+A thin table is not a quiet day. Read the lines under it before you conclude that nothing moved.
+
 Set `"usecases": {"per_day": 0}` or pass `--skip usecases` to turn it off.
 
 ## One key, and an optional second
 
-Everything the radar needs goes through [AIsa](https://go.aisa.one/yansen-zhu): X posts, Google Trends and domain data (DataForSEO behind it) and the models that judge names and propose phrases. One key, pay per call, no subscriptions to X's API or DataForSEO.
+Everything the radar needs goes through [AIsa](https://aisa.one): X posts, Google Trends and domain data (DataForSEO behind it) and the models that judge names and propose phrases. One key, pay per call, no subscriptions to X's API or DataForSEO.
 
-> That link is a referral link: signing up through it supports this project. The radar works the same with a key from anywhere on aisa.one.
 
-**Optional: `GOANYAPI_API_KEY`** ([goanyapi.com](https://goanyapi.com)) adds Google Trends' related queries to the keyword table, about $0.006 per name. Without it the table is built from the model's phrases alone. The service is young (first released in August 2026); in our tests calls took 20 to 55 seconds and about one in ten failed, so the radar tries twice, reports a failure in the table and carries on.
+**Optional: `GOANYAPI_API_KEY`** ([goanyapi.com](https://goanyapi.com)) improves the keyword table in two ways, for about $0.07 a day: it adds Google Trends' related queries for each name, and it reads the curve of the names and the bigger generic terms (1,000 searches a month or more, eight rows at most) from 30 days of daily data for one country, settled to yesterday. Those rows show the country after "Now", as in `still rising (US)`. Without the key the table is built from the model's phrases and the worldwide series alone. The service is young (first released in August 2026); in our tests calls took 20 to 55 seconds and about one in ten failed, so the radar tries twice, reports a failure in the table and carries on.
 
 Without an AIsa key the free signals still run (Hugging Face, GitHub, sitemaps, Search Console); the report then lists every term unsorted, because nothing judges which are names.
 
@@ -109,7 +109,7 @@ Python 3.10 or newer. The radar uses only the standard library.
 git clone https://github.com/zhuyansen/new-term-radar
 cd new-term-radar
 cp config.example.json config.json      # then edit: your X accounts, sitemaps, topics
-export AISA_API_KEY=...                 # from https://go.aisa.one/yansen-zhu
+export AISA_API_KEY=...                 # from https://aisa.one; or `aisa login` with the AIsa CLI
 python -m radar daily --out report.md
 ```
 
@@ -168,7 +168,7 @@ and from `sources`:
 | `breakout` | `window_days`, `min_stars`, `velocity_min` (stars a day), `delta_min` (stars since yesterday) |
 | `new_sites` | `queries`: a name and a SQL LIKE pattern on the domain (`"%ai%"`), one paid query each; `weekday` (0 = Monday) |
 | `review` | `after_days` (14) and `per_day` (5 leads a day) |
-| `usecases` | The keyword table. `per_day` (names read a day, 0 = off), `model`, `benchmark` (the keyword sizes are compared with), `min_volume` (monthly searches a phrase needs), `min_daily` (searches a day for "prioritize"), `recheck_days` (3), `related` (use related queries when `GOANYAPI_API_KEY` is set) and `related_geo` (`US`) |
+| `usecases` | The keyword table. `per_day` (names read a day, 0 = off), `model`, `benchmark` (the keyword sizes are compared with), `min_volume` (monthly searches a phrase needs), `min_daily` (searches a day for "prioritize"), `recheck_days` (3), `related` (use related queries when `GOANYAPI_API_KEY` is set), `related_geo` (`US`), `country_trends` (read the bigger rows' curves from that country), `country_min_volume` (1000) and `country_max` (8) |
 | `gsc` | `site` (`sc-domain:example.com`) and `token_file`. Leave `{}` to turn the signal off |
 
 Please read each site's robots.txt before you add its sitemap, and keep `pause` at or above its crawl-delay. The example config makes a few dozen requests a day in total, spaced by `pause`.
@@ -186,6 +186,62 @@ python scripts/gsc_auth.py gsc_client.json   # opens a browser once, writes gsc_
 
 `--mail` sends the report through [Resend](https://resend.com). Set `RESEND_API_KEY`, `EMAIL_FROM` (an address on a domain you verified there) and `RADAR_EMAIL_TO` (comma-separated). `pip install markdown` for the HTML version.
 
+## Use it from an agent: skills and an MCP server
+
+### Skills
+
+Three [Agent Skills](https://agentskills.io/home) live in `skills/`: one that does the whole job, and the two halves for those who want them apart.
+
+| Skill | What it does |
+|---|---|
+| `new-term-radar` | The whole run: today's new names, then the keyword priority table for them. Also takes names you already have. Start here |
+| `ai-listening` | Collects what is new in the last 24 hours across the signals, deduplicated, as one report of names |
+| `seo-new-keywords-research` | Takes names, or raw text that mentions them, and returns the keyword priority table: the generic terms behind each name, screened, sized and given a decision |
+
+```bash
+npx skills add zhuyansen/new-term-radar
+```
+
+In Claude Code the three skills also install as a plugin:
+
+```
+/plugin marketplace add zhuyansen/new-term-radar
+/plugin install new-term-radar@new-term-radar
+```
+
+Then ask your agent for "today's new AI keywords", "an AI listening report" or "keyword research on PhotoCraft and SynthID Detector". The skills clone this repository to `~/new-term-radar` if it is not there, tell you the cost before any paid run, and say when a table is incomplete.
+
+### MCP server
+
+For clients that speak MCP (Claude Code, Cursor, Claude Desktop):
+
+```bash
+pip install "new-term-radar[mcp] @ git+https://github.com/zhuyansen/new-term-radar"
+```
+
+```json
+{
+  "mcpServers": {
+    "new-term-radar": {
+      "command": "new-term-radar-mcp",
+      "env": {
+        "AISA_API_KEY": "...",
+        "RADAR_CONFIG": "/absolute/path/to/config.json",
+        "RADAR_STATE": "/absolute/path/to/state"
+      }
+    }
+  }
+}
+```
+
+| Tool | What it returns | Cost and time |
+|---|---|---|
+| `recent_leads` | What the radar kept, with review verdicts and the hit rate per signal | free, instant |
+| `keyword_table` | The keyword table for names you give it | about $0.05 a name plus $0.09 a call; 40 to 90 seconds a name |
+| `run_radar` | One `sources` or `daily` run and its report | paid; minutes. For a first try: the schedule belongs in cron or Actions |
+
+Point `RADAR_STATE` at the directory your scheduled runs write to and `recent_leads` shows their leads. The same two commands exist on the command line: `python -m radar keywords "name" …` and `python -m radar leads`.
+
 ## Running without AIsa: xAI, pytrends and the inbox
 
 Every AIsa step now has another way in, chosen in `config.json`:
@@ -198,6 +254,7 @@ Every AIsa step now has another way in, chosen in `config.json`:
 
 - **Models** (`radar/llm.py`): `provider` is `xai`, `grok-cli`, `aisa` or `auto`. `auto` takes the first that works: `XAI_API_KEY` set → xai; grok-cli installed and logged in (`grok-cli status --json` says `logged_in`) → grok-cli; `AISA_API_KEY` set → aisa; none → the model steps skip. `grok-cli` runs `grok-cli chat --json --no-web-search --no-stream --system <prompt> --prompt <input>` once per call (`llm.cli_model` adds `--model`, `llm.cli_timeout` sets the timeout, default 180 s) and reads `data.output_text`; no key is needed, the CLI's own OAuth login is used. With xai every model step (name judge, keyword proposals, the screen) uses `llm.model` through `https://api.x.ai/v1`; `llm.base_url` and `llm.key_env` point it at any other OpenAI-compatible server. No key: the judge and the proposals are skipped and the report goes out unsorted.
 - **Google Trends** (`radar/trends.py`): `provider` is `aisa`, `pytrends` or `auto` (aisa when `AISA_API_KEY` is set, else pytrends). pytrends (`pip install pytrends`) is free and unofficial: lookups are spaced by `delay` seconds, retried `retries` times with `backoff`×n seconds between, cached per day in `state/trends_cache/`, and after a 429 that survives the retries the rest of the day's lookups are dropped and listed in the report. From cloud servers Google often answers 429 after the first lookup or two; from a home connection it lasts longer.
+- `keywords` and `leads` work with these providers too: `keywords` reads the inbox's `x_posts.json` search entries, `volumes.json` and `related.json` for the names you give it, and uses grok-cli / xAI and pytrends. Without AIsa or GoAnyAPI the single-country series is skipped. When a provider is missing or fails (pytrends rate limit, no model, data the inbox lacked) the keyword table opens with the "incomplete" line and says which.
 - **New sites** need AIsa (DataForSEO whois overview); without the key the signal is skipped.
 - **Inbox** (`radar/inbox.py`): another agent, or you, can drop the day's data in `state/inbox/YYYY-MM-DD/` (or `inbox.dir/YYYY-MM-DD/`). Inbox data is used first; what is missing goes to AIsa when the key is set, else is skipped. Each `daily` run writes `requests.json` there: the accounts, names and phrases it had no data for.
 
@@ -246,6 +303,15 @@ python -m pytest -q tests
 
 The tests cover the logic (name extraction, scoring, the store, the reports) and call no network.
 
+## Thanks
+
+- [子木 @CoderJeffLee](https://x.com/CoderJeffLee) for the idea behind the keyword table: a new name and the generic terms downstream of it belong in one table, each with a decision.
+- [饭特稀 | Fentix @fantexi997](https://x.com/fantexi997) for [GoAnyAPI](https://goanyapi.com), the optional source of related queries and one-country Trends series.
+
+The diagram is drawn by `docs/make_diagram.py` (needs `rsvg-convert` and `ffmpeg`).
+
 ## License
 
 MIT. Extracted from the radar that runs daily behind [agentskillshub.top](https://agentskillshub.top).
+
+<!-- mcp-name: io.github.zhuyansen/new-term-radar -->
