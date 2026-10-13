@@ -204,7 +204,7 @@ Every AIsa step now has another way in, chosen in `config.json`:
 | File | Shape | Used by |
 |---|---|---|
 | `x_posts.json` | `{"users": {"<handle>": <X API v2 user tweets response>}, "search": {"<name>": <X API v2 search response>}}`, each response `{"data": [{"id", "text", "created_at", "author_id", "public_metrics": {"like_count"}}], "includes": {"users": [{"id", "username"}]}}` | ① X (users), keyword table evidence (search) |
-| `volumes.json` | Google Ads Keyword Planner historical metrics: `{"metrics": [{"keyword", "avgMonthlySearches", "monthlySearchVolumes": [{"year", "month": "AUGUST", "monthlySearches"}]}]}` | keyword table volumes |
+| `volumes.json` | Google Ads Keyword Planner historical metrics: `{"metrics": [{"keyword", "avgMonthlySearches", "monthlySearchVolumes": [{"year", "month": "AUGUST", "monthlySearches"}]}]}` | keyword table volumes (add keywords Keyword Planner left out with `avgMonthlySearches: 0`, or they are requested again) |
 | `related.json` | `{"<name>": {"rising": ["..."], "top": ["..."]}}` (Trends related queries, Google autocomplete, Keyword Planner ideas) | keyword table related queries |
 
 `requests.json` looks like `{"x_users": [...], "x_search": [...], "volumes": [...], "related": [...]}`. Phrases for `volumes` are only known after the model has proposed them, so they can be supplied for the next run.

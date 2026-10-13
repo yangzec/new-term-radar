@@ -181,7 +181,7 @@ python scripts/gsc_auth.py gsc_client.json   # 打开一次浏览器授权，写
 | 文件 | 格式 | 用在 |
 |---|---|---|
 | `x_posts.json` | `{"users": {"<账号>": <X API v2 用户推文响应>}, "search": {"<名字>": <X API v2 搜索响应>}}`，每个响应 `{"data": [{"id", "text", "created_at", "author_id", "public_metrics": {"like_count"}}], "includes": {"users": [{"id", "username"}]}}` | ① X（users）、关键词表证据（search） |
-| `volumes.json` | Google Ads 关键词规划师历史数据：`{"metrics": [{"keyword", "avgMonthlySearches", "monthlySearchVolumes": [{"year", "month": "AUGUST", "monthlySearches"}]}]}` | 关键词表搜索量 |
+| `volumes.json` | Google Ads 关键词规划师历史数据：`{"metrics": [{"keyword", "avgMonthlySearches", "monthlySearchVolumes": [{"year", "month": "AUGUST", "monthlySearches"}]}]}` | 关键词表搜索量（关键词规划师没返回的词，补一条 `avgMonthlySearches: 0`，否则会被反复请求） |
 | `related.json` | `{"<名字>": {"rising": ["..."], "top": ["..."]}}`（Trends 相关查询、Google 联想、关键词规划师 ideas 都行） | 关键词表相关查询 |
 
 `requests.json` 形如 `{"x_users": [...], "x_search": [...], "volumes": [...], "related": [...]}`。`volumes` 里的短语要等模型提议后才知道，所以留给下一次运行补。

@@ -215,3 +215,46 @@ def test_cli_ready_reads_status_json(monkeypatch):
     monkeypatch.setattr(llm.subprocess, "run", lambda cmd, **kw: Done(json.dumps({"ok": True, "data": {"logged_in": False}})))
     assert not llm.cli_ready()
     llm._cli_ok.clear()
+
+
+def _uc_fakes(monkeypatch):
+    monkeypatch.setattr(usecases, "propose", lambda model, name, ev: [{"phrase": "ai phone agent", "evidence": "e", "brand": False}]
+                        if ev["posts"] else [])
+    monkeypatch.setattr(usecases, "screen", lambda model, name, ev, cands: cands)
+    monkeypatch.setattr(usecases, "fetch_series", lambda keywords, bench, today: ({}, 0))
+    monkeypatch.setattr(usecases, "_readme", lambda repo: "")
+
+
+def test_inbox_evidence_for_an_earlier_name_is_used_and_the_read_is_redone(cfg, tmp_path, monkeypatch):
+    """Run 1 reads a name with no evidence and asks for it; run 2 (other leads that day)
+    still reads it from the inbox, and the volume of its phrase comes from volumes.json."""
+    monkeypatch.delenv("AISA_API_KEY")
+    _uc_fakes(monkeypatch)
+    first = usecases.run(cfg, tmp_path, ["esp32 iphone agent"], {}, TODAY)
+    assert first["no_evidence"] == ["esp32 iphone agent"]
+    assert json.loads((inbox.folder(cfg, tmp_path, TODAY) / "requests.json").read_text())["x_search"] == ["esp32 iphone agent"]
+    _write(tmp_path, "x_posts", {"search": {"ESP32 iPhone Agent": SEARCH}}, TODAY)
+    _write(tmp_path, "volumes", {"metrics": [{"keyword": "ai phone agent", "avgMonthlySearches": 1600,
+                                              "monthlySearchVolumes": [{"year": 2026, "month": "AUGUST", "monthlySearches": 1900}]}]}, TODAY)
+    second = usecases.run(cfg, tmp_path, ["some other lead"], {}, TODAY)
+    assert second["names"][0] == "esp32 iphone agent" and second["no_evidence"] == ["some other lead"]
+    row = next(r for r in second["rows"] if r["phrase"] == "ai phone agent")
+    assert row["volume"] == 1600 and row["month"] == "2026-08"
+    state = usecases.snap.load(tmp_path / "usecases.json.gz")
+    assert state["esp32 iphone agent"] == {"first": TODAY.isoformat(), "runs": 1}
+
+
+def test_requests_never_ask_for_what_the_inbox_holds(cfg, tmp_path):
+    _write(tmp_path, "x_posts", {"users": {"openai": SEARCH}}, TODAY)
+    _write(tmp_path, "volumes", {"metrics": [{"keyword": "ai phone agent", "avgMonthlySearches": 1}]}, TODAY)
+    inbox.request(cfg, tmp_path, "x_users", ["OpenAI", "xai"], TODAY)
+    inbox.request(cfg, tmp_path, "volumes", ["ai phone agent", "run llm on mac"], TODAY)
+    req = json.loads((inbox.folder(cfg, tmp_path, TODAY) / "requests.json").read_text())
+    assert req == {"x_users": ["xai"], "volumes": ["run llm on mac"]}
+
+
+def test_requests_are_pruned_even_when_nothing_new_is_asked(cfg, tmp_path):
+    inbox.request(cfg, tmp_path, "x_search", ["tubetext"], TODAY)
+    _write(tmp_path, "x_posts", {"search": {"tubetext": SEARCH}}, TODAY)
+    inbox.request(cfg, tmp_path, "x_search", [], TODAY)
+    assert json.loads((inbox.folder(cfg, tmp_path, TODAY) / "requests.json").read_text()) == {"x_search": []}

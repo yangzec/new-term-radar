@@ -417,11 +417,18 @@ def run(cfg: dict, state: Path, names: list[str], repos: dict[str, str], today: 
     today = today or date.today()
     path = state / "usecases.json.gz"
     seen: dict[str, dict] = snap.load(path) or {}
-    todo = due(names, seen, today, c["per_day"], c["recheck_days"])
-    if not todo:
-        return {"names": [], "rows": [], "proposed": 0, "cost_micros": 0}
     box_x = inbox.load(cfg, state, "x_posts", today) or {}
     box_rel = inbox.load(cfg, state, "related", today) or {}
+    # Names an earlier run asked about (requests.json) and the inbox now answers for come
+    # first: the day's leads move between runs, the supplied evidence should not go unused.
+    # A name read earlier without any evidence ("no_ev") is read again once evidence arrives.
+    box_x["search"] = {" ".join(n.lower().split()): v for n, v in (box_x.get("search") or {}).items()}
+    answered = list(box_x["search"])
+    names = list(dict.fromkeys(answered + list(names)))
+    retry = [n for n in answered if (seen.get(n) or {}).get("no_ev")]
+    todo = list(dict.fromkeys(retry + due(names, seen, today, c["per_day"], c["recheck_days"])))[:c["per_day"]]
+    if not todo:
+        return {"names": [], "rows": [], "proposed": 0, "cost_micros": 0}
     box_vol = inbox.volumes(inbox.load(cfg, state, "volumes", today) or {})
     ev, cost = evidence(todo, repos, today, box_x.get("search"))
     inbox.request(cfg, state, "x_search", [n for n in todo if n not in (box_x.get("search") or {})], today)
@@ -469,7 +476,10 @@ def run(cfg: dict, state: Path, names: list[str], repos: dict[str, str], today: 
     rows.sort(key=lambda r: (order[r["decision"]], -(r.get("per_day") or 0), -(r.get("volume") or 0)))
     for name in todo:
         s = seen.setdefault(name, {"first": today.isoformat(), "runs": 0})
-        s["runs"] += 1
+        if not s.pop("no_ev", False):   # a read without evidence does not count as a read
+            s["runs"] += 1
+        if not ev[name]["posts"] and not ev[name]["readme"]:
+            s["no_ev"] = True
     cutoff = (today - timedelta(days=STATE_DAYS)).isoformat()
     snap.save(path, {n: s for n, s in seen.items() if s["first"] >= cutoff})
     return {"names": todo, "rows": rows, "proposed": asked, "relevant": len(proposed), "kept": len(generic), "benchmark": bench,

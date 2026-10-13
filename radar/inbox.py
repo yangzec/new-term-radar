@@ -8,6 +8,8 @@ state/inbox/YYYY-MM-DD/   (the directory can be moved with config.json "inbox.di
   volumes.json   Google Ads Keyword Planner historical metrics:
                  {"metrics": [{"keyword", "avgMonthlySearches",
                                "monthlySearchVolumes": [{"year", "month": "AUGUST", "monthlySearches"}]}]}
+                 Keyword Planner leaves out keywords it has no data for; add them with
+                 "avgMonthlySearches": 0 so they are not requested again.
   related.json   {"<name>": {"rising": [...], "top": [...]}}  (Trends related queries, Google
                  autocomplete or Keyword Planner ideas; plain lists of query strings)
 
@@ -71,13 +73,27 @@ def volumes(data: dict) -> dict[str, dict]:
     return out
 
 
+def supplied(cfg: dict, state: Path, kind: str, today: date | None = None) -> set[str]:
+    """What the inbox already holds for a request kind (lowercased), so requests.json never
+    asks again for something supplied."""
+    if kind in ("x_users", "x_search"):
+        part = (load(cfg, state, "x_posts", today) or {}).get("users" if kind == "x_users" else "search") or {}
+        return {" ".join(k.lower().lstrip("@").split()) for k in part}
+    if kind == "volumes":
+        return set(volumes(load(cfg, state, "volumes", today) or {}))
+    if kind == "related":
+        return {" ".join(k.lower().split()) for k in load(cfg, state, "related", today) or {}}
+    return set()
+
+
 def request(cfg: dict, state: Path, kind: str, items: list[str], today: date | None = None) -> None:
     """Note what the radar wanted and had no data for (requests.json, merged)."""
-    if not items:
-        return
     d = folder(cfg, state, today)
-    d.mkdir(parents=True, exist_ok=True)
     p = d / "requests.json"
+    if not items and not p.exists():
+        return
+    d.mkdir(parents=True, exist_ok=True)
     cur = json.loads(p.read_text()) if p.exists() else {}
-    cur[kind] = sorted(set(cur.get(kind, [])) | set(items))
+    have = supplied(cfg, state, kind, today)
+    cur[kind] = sorted(i for i in set(cur.get(kind, [])) | set(items) if " ".join(i.lower().lstrip("@").split()) not in have)
     p.write_text(json.dumps(cur, ensure_ascii=False, indent=1))
