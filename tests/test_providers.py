@@ -138,3 +138,80 @@ def test_daily_creates_the_output_directory(tmp_path, monkeypatch):
     cli.main(["daily", "--config", str(tmp_path / "config.json"), "--state", str(tmp_path / "s"), "--out", str(out),
               "--skip", "newsites,gsc,review,usecases,judge"])
     assert out.exists() and out.with_suffix(".json").exists()
+
+
+class Done:
+    def __init__(self, out, code=0, err=""):
+        self.stdout, self.returncode, self.stderr = out, code, err
+
+
+def _cli(monkeypatch, out, code=0):
+    seen = {}
+
+    def run(cmd, **kw):
+        seen["cmd"], seen["timeout"] = cmd, kw.get("timeout")
+        return Done(out, code)
+
+    monkeypatch.setattr(llm, "_cli_path", lambda: "/bin/grok-cli")
+    monkeypatch.setattr(llm, "cli_ready", lambda: True)
+    monkeypatch.setattr(llm.subprocess, "run", run)
+    return seen
+
+
+def test_auto_order_xai_then_grok_cli_then_aisa_then_nothing(monkeypatch):
+    monkeypatch.setattr(llm, "cli_ready", lambda: True)
+    monkeypatch.setenv("XAI_API_KEY", "k")
+    assert llm.provider() == "xai"
+    monkeypatch.delenv("XAI_API_KEY")
+    assert llm.provider() == "grok-cli"
+    monkeypatch.setattr(llm, "cli_ready", lambda: False)
+    assert llm.provider() == "aisa"
+    monkeypatch.delenv("AISA_API_KEY")
+    assert llm.provider() == "" and not llm.available()
+
+
+def test_grok_cli_judge_passes_system_prompt_and_model_and_parses_fenced_json(monkeypatch):
+    llm.configure({"provider": "grok-cli", "cli_model": "grok-4.6", "cli_timeout": 60})
+    answer = 'Sure:\n```json\n[{"i": 0, "score": 0.95}, {"i": 1, "score": 0.1}]\n```'
+    seen = _cli(monkeypatch, json.dumps({"ok": True, "data": {"output_text": answer}}))
+    rows = [{"term": "opus 5.5"}, {"term": "dashboard"}]
+    assert judge.score(rows, "ignored") == {"judged": 2}
+    assert rows[0]["named"] == 0.95 and rows[1]["named"] == 0.1
+    cmd = seen["cmd"]
+    assert cmd[:2] == ["/bin/grok-cli", "chat"] and "--json" in cmd and "--no-web-search" in cmd
+    assert cmd[cmd.index("--model") + 1] == "grok-4.6" and cmd[cmd.index("--system") + 1].startswith("You sort terms")
+    assert '"opus 5.5"' in cmd[cmd.index("--prompt") + 1] and seen["timeout"] == 90
+
+
+def test_grok_cli_failure_is_an_error_not_a_crash(monkeypatch):
+    llm.configure({"provider": "grok-cli"})
+    _cli(monkeypatch, json.dumps({"ok": False, "error": "relogin required"}), code=1)
+    rows = [{"term": "x"}]
+    out = judge.score(rows, "m")
+    assert "relogin" in out["error"] and "named" not in rows[0]
+    _cli(monkeypatch, "not json at all", code=2)
+    assert usecases.screen("m", "n", {"posts": [], "readme": "r"}, [{"phrase": "a b", "brand": False}]) == [{"phrase": "a b", "brand": False}]
+
+
+def test_grok_cli_timeout(monkeypatch):
+    llm.configure({"provider": "grok-cli", "cli_timeout": 1})
+    monkeypatch.setattr(llm, "_cli_path", lambda: "/bin/grok-cli")
+
+    def run(cmd, **kw):
+        raise llm.subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setattr(llm.subprocess, "run", run)
+    with pytest.raises(llm.LLMError, match="timed out"):
+        llm.chat("m", "s", "u")
+
+
+def test_cli_ready_reads_status_json(monkeypatch):
+    llm._cli_ok.clear()
+    monkeypatch.undo()   # drop conftest's cli_ready stub for this test
+    monkeypatch.setattr(llm, "_cli_path", lambda: "/bin/fake-grok")
+    monkeypatch.setattr(llm.subprocess, "run", lambda cmd, **kw: Done(json.dumps({"ok": True, "data": {"logged_in": True}})))
+    assert llm.cli_ready()
+    llm._cli_ok.clear()
+    monkeypatch.setattr(llm.subprocess, "run", lambda cmd, **kw: Done(json.dumps({"ok": True, "data": {"logged_in": False}})))
+    assert not llm.cli_ready()
+    llm._cli_ok.clear()

@@ -24,7 +24,8 @@ DEFAULTS = {
     "usecases": {"per_day": 5, "model": "claude-sonnet-4-6", "min_volume": 50, "trends_max": 10, "recheck_days": 3,
                  "location_code": 2840, "benchmark": "gpts", "min_daily": 300, "related": True, "related_geo": "US"},
     "gsc": {},
-    "llm": {"provider": "auto", "model": "grok-4-1-fast-non-reasoning", "base_url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY"},
+    "llm": {"provider": "auto", "model": "grok-4-1-fast-non-reasoning", "base_url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY",
+            "cli": "grok-cli", "cli_model": "", "cli_timeout": 180},
     "trends": {"provider": "auto", "delay": 8, "retries": 3, "backoff": 60, "geo": "", "cache": True},
     "inbox": {"dir": ""},
 }

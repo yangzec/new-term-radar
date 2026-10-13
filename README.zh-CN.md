@@ -173,7 +173,7 @@ python scripts/gsc_auth.py gsc_client.json   # 打开一次浏览器授权，写
 "inbox":  {"dir": ""}
 ```
 
-- **模型**（`radar/llm.py`）：`provider` 可选 `xai`、`aisa`、`auto`（设了 `XAI_API_KEY` 就用 xai，否则 aisa）。用 xai 时，名字判断、关键词提议、筛选都用 `llm.model`，走 `https://api.x.ai/v1`；改 `llm.base_url` 和 `llm.key_env` 可接任何兼容 OpenAI 的服务。没有 key：跳过判断和提议，报告照出，只是不排序。
+- **模型**（`radar/llm.py`）：`provider` 可选 `xai`、`grok-cli`、`aisa`、`auto`。`auto` 按顺序选第一个能用的：设了 `XAI_API_KEY` → xai；装了 grok-cli 且已登录（`grok-cli status --json` 里 `logged_in` 为 true）→ grok-cli；设了 `AISA_API_KEY` → aisa；都没有 → 跳过模型步骤。`grok-cli` 每次调用执行 `grok-cli chat --json --no-web-search --no-stream --system <提示词> --prompt <输入>`，读 `data.output_text`（`llm.cli_model` 加 `--model`，`llm.cli_timeout` 设超时，默认 180 秒），不需要 key，用 CLI 自己的 OAuth 登录。用 xai 时，名字判断、关键词提议、筛选都用 `llm.model`，走 `https://api.x.ai/v1`；改 `llm.base_url` 和 `llm.key_env` 可接任何兼容 OpenAI 的服务。没有 key：跳过判断和提议，报告照出，只是不排序。
 - **Google Trends**（`radar/trends.py`）：`provider` 可选 `aisa`、`pytrends`、`auto`（有 `AISA_API_KEY` 用 aisa，否则 pytrends）。pytrends（`pip install pytrends`）免费但非官方：每次查询间隔 `delay` 秒，失败重试 `retries` 次、每次等 `backoff`×n 秒，按天缓存在 `state/trends_cache/`；重试后仍 429，当天剩下的查询放弃并写进报告。云服务器上 Google 经常查一两次就 429，家用网络能撑久一些。
 - **新站信号**只能用 AIsa（DataForSEO whois overview），没有 key 就跳过。
 - **收件箱**（`radar/inbox.py`）：别的 agent 或你自己，可以把当天数据放进 `state/inbox/YYYY-MM-DD/`（或 `inbox.dir/YYYY-MM-DD/`）。优先用收件箱；缺的部分有 AIsa key 就走 AIsa，否则跳过。每次 `daily` 会在同目录写 `requests.json`，列出没拿到数据的账号、名字和短语。

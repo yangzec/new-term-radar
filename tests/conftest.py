@@ -13,6 +13,7 @@ def english(monkeypatch):
     monkeypatch.delenv("XAI_API_KEY", raising=False)
     from radar import llm, trends
     llm.configure({})
+    monkeypatch.setattr(llm, "cli_ready", lambda: False)   # a real grok-cli on the box must not be picked
     trends.configure({})
 
 

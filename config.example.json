@@ -30,7 +30,7 @@
   "review": {"after_days": 14, "per_day": 5},
   "usecases": {"per_day": 5, "model": "claude-sonnet-4-6", "benchmark": "gpts", "min_volume": 50, "min_daily": 300, "related": true, "related_geo": "US"},
 
-  "llm": {"provider": "auto", "model": "grok-4-1-fast-non-reasoning"},
+  "llm": {"provider": "auto", "model": "grok-4-1-fast-non-reasoning", "cli_model": "", "cli_timeout": 180},
   "trends": {"provider": "auto", "delay": 8, "retries": 3, "backoff": 60},
   "inbox": {"dir": ""},
 
